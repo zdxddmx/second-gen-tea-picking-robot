@@ -86,8 +86,8 @@ TP_TEST_CASE(force_sensor, filter_chain_attenuates_noise)
 TP_TEST_CASE(force_sensor, plausibility_constants_are_consistent)
 {
     /* The zero calibration itself is exercised end-to-end by the firmware
-     * simulation 鈥?scenario A reaches a 2.17 N grip against a 2.20 N setpoint,
-     * which is only possible with a valid zero 鈥?so what is asserted here is
+     * simulation —scenario A reaches a 2.17 N grip against a 2.20 N setpoint,
+     * which is only possible with a valid zero —so what is asserted here is
      * that the guard constants are ordered the way the routine assumes.  A
      * spread limit larger than the target force would let a calibration run
      * while the jaws were closing. */

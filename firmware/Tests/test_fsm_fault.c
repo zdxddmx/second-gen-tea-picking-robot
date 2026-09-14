@@ -45,7 +45,7 @@ TP_TEST_CASE(fsm, no_duplicate_state_event_pair)
     uint32_t j;
 
     /* A duplicate pair means the second entry is dead code, and which one wins
-     * depends on the search order 鈥?a latent bug that is invisible in review. */
+     * depends on the search order —a latent bug that is invisible in review. */
     for (i = 0u; i < n; ++i) {
         for (j = i + 1u; j < n; ++j) {
             int same = (table[i].from == table[j].from) &&
@@ -144,7 +144,8 @@ TP_TEST_CASE(fsm, start_requires_a_valid_target)
     TP_ASSERT_EQ(tp_fsm_state(&fsm), TP_STATE_IDLE);
 
     /* START with no target: the guard must refuse, and the state must not
-     * change.  This is the bug that the wrong-context guard pointer produced 鈥?     * it refused *with* a target and allowed without one, intermittently. */
+     * change.  This is the bug that the wrong-context guard pointer produced —
+     * it refused *with* a target and allowed without one, intermittently. */
     TP_ASSERT_EQ(tp_fsm_handle_event(&fsm, TP_EV_START, 10u), TP_ERR_STATE);
     TP_ASSERT_EQ(tp_fsm_state(&fsm), TP_STATE_IDLE);
     TP_ASSERT_EQ(fsm.guard_rejections, 1u);

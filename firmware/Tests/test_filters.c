@@ -163,7 +163,7 @@ TP_TEST_CASE(filters_median, removes_a_single_outlier)
     }
     TP_ASSERT_NEAR(v, 1.0f, 1.0e-6f);
 
-    /* A single huge spike must not move the output at all 鈥?which is precisely
+    /* A single huge spike must not move the output at all —which is precisely
      * what the moving average *cannot* do. */
     v = tp_filter_median_update(&f, 1000.0f);
     TP_ASSERT_NEAR(v, 1.0f, 1.0e-6f);
