@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file    test_plant_gripper.c
  * @brief   Plant-model and gripper-driver tests, including the sign-convention
  *          cross-check between the two.
@@ -32,7 +32,7 @@ static void plant_run(int steps)
 }
 
 /* =========================================================================
- * Sign conventions 鈥?the cross-check the design promised
+ * Sign conventions —the cross-check the design promised
  * ========================================================================= */
 
 TP_TEST_CASE(plant_gripper, duty_sign_agrees_between_driver_and_plant)
@@ -101,6 +101,15 @@ TP_TEST_CASE(plant_gripper, contact_force_is_nonlinear_and_monotone)
      * against the stop, where they agree at 3.0 N and the test proves nothing.
      * That is exactly how the first version of this test passed 4000 steps and
      * still measured three identical forces.
+     *
+     * The three sample points are spaced by *equal* step counts on purpose.
+     * They used to be 1010 / 1050 / 1082 — windows of 40 and 32 steps — so the
+     * comparison mixed curvature with window length and passed only while the
+     * curvature happened to win.  Correcting the force back-drive sign (see
+     * `plant_model.c`) tipped that balance and the test failed with 0.868
+     * against 0.884: the smaller increment belonged to the shorter window, not
+     * to a change in the physics.  Equal windows measure what the assertion
+     * claims to measure.
      */
     TP_ASSERT_EQ(tp_plant_init(&p), TP_OK);
     tp_plant_set_stem_gap(&p, 6.0f);
@@ -111,14 +120,14 @@ TP_TEST_CASE(plant_gripper, contact_force_is_nonlinear_and_monotone)
 
     TP_ASSERT_EQ(tp_plant_init(&p), TP_OK);
     tp_plant_set_stem_gap(&p, 6.0f);
-    for (i = 0; i < 1050; ++i) {
+    for (i = 0; i < 1042; ++i) {
         tp_plant_step(&p, 0.0f, 300.0f, PSTEP);
     }
     f2 = p.gripper.force_n;
 
     TP_ASSERT_EQ(tp_plant_init(&p), TP_OK);
     tp_plant_set_stem_gap(&p, 6.0f);
-    for (i = 0; i < 1082; ++i) {
+    for (i = 0; i < 1074; ++i) {
         tp_plant_step(&p, 0.0f, 300.0f, PSTEP);
     }
     f3 = p.gripper.force_n;
@@ -132,6 +141,50 @@ TP_TEST_CASE(plant_gripper, contact_force_is_nonlinear_and_monotone)
      * reason a fixed-gap gripper is unsafe, so the force gained over the second
      * half of the travel must exceed the force gained over the first. */
     TP_ASSERT_GT(f3 - f2, f2 - f1);
+}
+TP_TEST_CASE(plant_gripper, a_free_jaw_is_pushed_open_by_the_stem)
+{
+    /*
+     * The force back-drive term is the only place the stem's reaction reaches
+     * the jaw's own dynamics, and its sign decides whether a free jaw is stable
+     * or not.
+     *
+     * Squeeze the stem, then command zero duty and let the plant run.  The
+     * reaction force pushes the jaws *apart*, so the gap must grow and the force
+     * must fall towards zero.  With the sign inverted the loop is positive
+     * feedback - a bigger force closes the jaw further, which raises the force -
+     * and the jaw runs away to its mechanical stop instead.  That is not a
+     * hypothetical: scenario D showed the jaws closing from a 9.2 mm gap to the
+     * 1.0 mm hard stop with zero duty commanded, the force climbing from the
+     * 5.013 N trip point to the 16.4 N ADC rail, which then latched a sensor
+     * fault that had nothing to do with the sensor.
+     */
+    tp_plant_t p;
+    float gap_at_release;
+    float force_at_release;
+    int i;
+
+    TP_ASSERT_EQ(tp_plant_init(&p), TP_OK);
+    tp_plant_set_stem_gap(&p, 6.0f);
+
+    /* Close onto the stem until there is a real force to react against. */
+    for (i = 0; i < 1060; ++i) {
+        tp_plant_step(&p, 0.0f, 300.0f, PSTEP);
+    }
+    gap_at_release = p.gripper.gap_mm;
+    force_at_release = p.gripper.force_n;
+    TP_ASSERT_GT(force_at_release, 1.0f);
+
+    /* Zero duty from here: the servo is no longer driving the jaw. */
+    for (i = 0; i < 500; ++i) {
+        tp_plant_step(&p, 0.0f, 0.0f, PSTEP);
+    }
+
+    TP_ASSERT_MSG(p.gripper.gap_mm > gap_at_release,
+                  "the stem must push a free jaw open, not closed");
+    TP_ASSERT_MSG(p.gripper.force_n < force_at_release,
+                  "the force must fall once the jaw is free to open");
+    TP_ASSERT_FINITE(p.gripper.gap_mm);
 }
 TP_TEST_CASE(plant_gripper, damage_flag_latches_above_the_threshold)
 {
@@ -183,7 +236,7 @@ TP_TEST_CASE(plant_joint, zero_duty_leaves_a_gravity_loaded_axis_free)
     TP_ASSERT_EQ(tp_plant_init(&p), TP_OK);
     /* With the drive off, the 20 mN*m gravity load must accelerate the axis.
      * This is *correct* physics and it is why the application holds position in
-     * IDLE rather than commanding zero duty 鈥?the first host simulation run
+     * IDLE rather than commanding zero duty —the first host simulation run
      * drifted at 148 mrad/s because it did not. */
     plant_run(500);
     tp_plant_step(&p, 0.0f, 0.0f, PSTEP);
