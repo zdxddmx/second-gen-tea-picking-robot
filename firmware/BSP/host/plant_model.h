@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file    plant_model.h
  * @brief   Deterministic physics model of the robot, used by the host backend.
  *
@@ -65,7 +65,7 @@
 #include <stdint.h>
 
 #include "status.h"
-
+#include "compiler.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -80,10 +80,41 @@ extern "C" {
 #define TP_PLANT_MOTOR_L_H          (1.5e-3f)
 /** @brief Electrical time constant `L/R`, seconds. */
 #define TP_PLANT_MOTOR_TAU_E_S      (TP_PLANT_MOTOR_L_H / TP_PLANT_MOTOR_R_OHM)
-/** @brief Torque constant, N*m/A (effective, referred to the joint output). */
-#define TP_PLANT_MOTOR_KT_NM_PER_A  (2.0f)
-/** @brief Back-EMF constant, V*s/rad (referred to the joint output). */
-#define TP_PLANT_MOTOR_KE_VS_RAD    (0.05f)
+
+/**
+ * @name Torque and back-EMF constants
+ *
+ * **These two numbers must be equal.**  For any lossless electromechanical
+ * energy conversion the torque constant in N*m/A and the back-EMF constant in
+ * V*s/rad are the *same number*: the identity follows from
+ * `P_mech = T*w = (Kt*I)*w` and `P_elec = V*I = (Ke*w)*I`, which must agree.
+ * A model with `Kt != Ke` describes a machine that produces more torque per amp
+ * than its own back-EMF implies, i.e. one that does not conserve energy.
+ *
+ * The first revision had `Kt = 2.0` and `Ke = 0.05` - a factor of 40 apart -
+ * which no compiler, no test and no simulation run complained about.  It only
+ * surfaced when the numbers were checked against each other rather than each
+ * against the behaviour it was tuned for.  The static assertion below is what
+ * makes that check permanent.
+ *
+ * A gearbox does not break the identity: referring both constants to the joint
+ * output multiplies each by the same reduction ratio, so they stay equal.
+ *
+ * **Why 0.4.**  Two requirements set the range, and they pull in opposite
+ * directions:
+ *   - top speed: `V_bus / Ke >= 60 rad/s` needs `Ke <= 24/60 = 0.4` V*s/rad;
+ *   - holding torque: the joint must hold its load at a sane current, which
+ *     needs `Kt` large enough that `Kt * I_continuous` covers the load torque
+ *     with margin.  At `Kt = 0.4` and the 3 A continuous limit that is
+ *     1.2 N*m against a 20 mN*m modelled load, and 2.0 N*m at the 5 A peak -
+ *     ample, and reachable with a 24 V bus.
+ *
+ * The pair `(0.4, 0.4)` is the only value satisfying both, which is why the
+ * numbers are derived here rather than picked.
+ * @{ */
+#define TP_PLANT_MOTOR_KT_NM_PER_A  (0.4f)
+#define TP_PLANT_MOTOR_KE_VS_RAD    (0.4f)
+/** @} */
 /** @brief Joint-space inertia, kg*m^2. */
 #define TP_PLANT_JOINT_J_KGM2       (2.5e-3f)
 /** @brief Viscous friction coefficient, N*m*s/rad. */
@@ -120,6 +151,21 @@ extern "C" {
 /** @brief Force above which the bud is considered damaged, N (latching). */
 #define TP_PLANT_STEM_DAMAGE_N      (4.0f)
 
+/* =========================================================================
+ * Compile-time consistency checks
+ * ========================================================================= */
+
+/**
+ * @brief The torque and back-EMF constants must be numerically equal.
+ *
+ * See the derivation above: they are the same physical quantity expressed in
+ * different units, so a mismatch means the model does not conserve energy.  The
+ * first revision was out by a factor of 40 and nothing caught it.
+ */
+TP_STATIC_ASSERT(TP_PLANT_MOTOR_KT_NM_PER_A == TP_PLANT_MOTOR_KE_VS_RAD,
+                 "Kt and Ke must be equal in SI units (energy conservation)");
+TP_STATIC_ASSERT(TP_PLANT_MOTOR_TAU_E_S < 0.001f,
+                 "the electrical pole must be much faster than the 1 ms step");
 /* =========================================================================
  * State
  * ========================================================================= */

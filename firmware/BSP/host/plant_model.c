@@ -51,7 +51,14 @@ static float plant_rand_unit(uint32_t *state)
  * The central limit theorem gives a mean of 3 and a variance of 0.5 for six
  * uniforms, so `(sum - 3) / sqrt(0.5)` is normalised.  Using 6 terms instead
  * of the usual 12 keeps it cheap while staying close enough to Gaussian for
- * noise-injection purposes; the truncation at +-2.45 sigma is irrelevant here.
+ * noise-injection purposes.
+ *
+ * The support is bounded: the sum lies in [0, 6), so the sample lies in
+ * +-3*sqrt(2) = +-4.243 sigma.  An earlier revision of this comment said
+ * +-2.45 sigma, which is the bound for a *two*-term sum (2/sqrt(2/3)) and is
+ * wrong for six terms.  Nothing depends on the figure - the tails are not what
+ * the noise test exercises - but a wrong number in a comment is worse than no
+ * number, because the next reader has to re-derive it to find out.
  *
  * @param[in,out] state  Generator state.
  * @return Zero-mean unit-variance sample.
@@ -319,8 +326,25 @@ void tp_plant_step(tp_plant_t *p, float pwm_joint, float pwm_gripper, float dt_s
         float v_cmd = -(pwm_gripper / TP_MAX_PWM_PERMILLE)
                     * TP_GRIPPER_MAX_SPEED_MM_S;
         v_jaw += (v_cmd - v_jaw) * alpha_jaw;
-        /* Force back-drive: the servo is stiff but not infinitely so. */
-        v_jaw -= p->gripper.force_n / TP_PLANT_JAW_BACKDRIVE;
+        /* Force back-drive: the servo is stiff but not infinitely so, and the
+         * stem pushes back.  The sign matters more than the magnitude: the
+         * stem's reaction force acts in the *opening* direction, so the term is
+         * added, not subtracted.
+         *
+         * Subtracting it (as the first revision did) makes the jaw/stem pair a
+         * positive-feedback loop: a larger force drives the jaw further closed,
+         * which raises the force again.  With the servo commanded to zero the
+         * loop diverges exponentially and the jaw runs to its mechanical stop,
+         * which is what scenario D showed - the over-force protection fired at
+         * 5.013 N, the jaw was then commanded to zero duty, and the force went
+         * on climbing to the 16.4 N ADC rail with the gap falling from 9.2 mm to
+         * the 1.0 mm hard stop.  None of that was the controller's doing, and
+         * the sensor fault it latched at the rail was an artefact of this sign.
+         *
+         * The magnitude is deliberately modest: at the 2.2 N working point the
+         * back-drive is 0.11 mm/s against a commanded closing speed of 2 mm/s,
+         * so it perturbs the force loop without dominating it. */
+        v_jaw += p->gripper.force_n / TP_PLANT_JAW_BACKDRIVE;
     }
 
     p->gripper.gap_vel_mm_s = v_jaw;
