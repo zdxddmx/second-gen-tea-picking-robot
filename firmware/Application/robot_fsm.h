@@ -4,9 +4,9 @@
  *
  * @details
  * # What it is
- * The decision layer.  It answers exactly one question 鈥?*"given that I am in
+ * The decision layer.  It answers exactly one question —*"given that I am in
  * state S and event E just happened, where do I go next, and what do I do on
- * the way?"* 鈥?and nothing else.  It does not touch hardware, does not compute
+ * the way?"* —and nothing else.  It does not touch hardware, does not compute
  * control outputs and does not encode protocol frames.
  *
  * # Why a transition table instead of nested if/else
@@ -16,7 +16,7 @@
  *
  *   - an unhandled `(state, event)` pair is **silently ignored**, so a missing
  *     transition looks identical to a correct no-op;
- *   - the set of legal transitions cannot be reviewed 鈥?you have to trace every
+ *   - the set of legal transitions cannot be reviewed —you have to trace every
  *     branch to answer "can this machine ever get from GRIP to RELEASE without
  *     passing through PICK?";
  *   - adding a state means editing several places, and a forgotten one
@@ -43,7 +43,7 @@
  *     consistent inside an action).
  *
  * # What the FSM does not do
- * It does not run the pick *sequence* 鈥?@ref tp_force_control_t does, because
+ * It does not run the pick *sequence* —@ref tp_force_control_t does, because
  * the sequence is a continuous control problem (six sub-states, regulated by a
  * PID) while the FSM is a discrete one.  Conflating the two produces a state
  * machine with a 1 kHz heartbeat, which is a well-known way to make both parts
@@ -100,7 +100,7 @@ typedef enum {
  *       it is not a detail: the first revision passed the application context
  *       and had the guards cast it to `tp_robot_fsm_t *`, which is a type error
  *       the compiler cannot see.  The guards then read whatever happened to sit
- *       at the FSM's field offsets inside the application struct 鈥?so
+ *       at the FSM's field offsets inside the application struct —so
  *       `guard_has_target()` silently returned "no target" and the machine
  *       refused to start a cycle, intermittently, depending on unrelated fields.
  *       Everything a guard needs (the target flag, the fault latch, the E-stop

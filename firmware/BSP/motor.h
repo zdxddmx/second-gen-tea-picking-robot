@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file    motor.h
  * @brief   Motor drive abstraction: duty, enable, current and protections.
  *
@@ -38,7 +38,7 @@
  *
  * # What happens without it
  * The arm works on the bench and fails in the field, because the failure mode
- * is a current spike that only appears when the commanded step is large — i.e.
+ * is a current spike that only appears when the commanded step is large —i.e.
  * during the first move after a long idle, which is exactly the demo.
  *
  * @copyright MIT License, see LICENSE.
@@ -56,6 +56,18 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @brief Window over which the *peak* current limit applies, milliseconds.
+ *
+ * `TP_MAX_CURRENT_MA` is a continuous rating and `TP_PEAK_CURRENT_MA` a
+ * short-time one, and enforcing only the former means a drive can sit at the
+ * continuous limit forever while the peak figure in `config.h` describes
+ * nothing.  The value was documented and never used, which is worse than not
+ * having it: a reader sizing a driver against a 5 A peak would be working from a
+ * number the firmware does not implement.
+ */
+#define TP_MOTOR_PEAK_WINDOW_MS 50u
 
 /** @brief Number of consecutive over-current samples before the latch trips. */
 #define TP_MOTOR_OC_TRIP_SAMPLES 20u
@@ -80,7 +92,8 @@ typedef struct {
     int      fault;               /**< Latched over-current / driver fault.  */
     int      output_saturated;    /**< Non-zero when the duty is clamped.    */
 
-    uint32_t overcurrent_samples; /**< Consecutive samples above the limit.  */
+    uint32_t overcurrent_samples; /**< Consecutive samples above the continuous limit. */
+    uint32_t peak_samples;        /**< Consecutive samples above the peak limit.   */
     uint32_t last_overcurrent_ms; /**< Timestamp of the last violation.      */
     uint32_t foldback_events;     /**< How often the limit was applied.      */
     uint32_t stop_requests;       /**< Number of @ref tp_motor_stop calls.   */

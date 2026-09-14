@@ -133,7 +133,7 @@ typedef struct {
      * Accumulated only once the force has actually entered the settling band,
      * and unconditionally during PICK.  Including the initial ramp from the
      * contact threshold up to the setpoint would drag the mean down and make a
-     * correctly regulated 2.2 N grip report as 1.66 N 鈥?which is exactly what
+     * correctly regulated 2.2 N grip report as 1.66 N —which is exactly what
      * the first revision of this file did.  The number has to answer "what
      * force did we hold the bud at?", not "what was the average over the whole
      * closure?". */

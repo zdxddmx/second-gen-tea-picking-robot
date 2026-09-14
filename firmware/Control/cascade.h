@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file    cascade.h
  * @brief   Cascaded position -> velocity control of the arm joint.
  *
@@ -45,7 +45,7 @@
  * the controller notices, so the position error is unavoidable.
  *
  * **When NOT to cascade.**  If the inner loop cannot be made much faster than
- * the outer one — say within a factor of three — the cascade is worse than a
+ * the outer one —say within a factor of three —the cascade is worse than a
  * single loop, because the extra lag adds phase loss for no benefit.  Here the
  * velocity loop closes at roughly 8 Hz and the position loop at about
  * 0.55 Hz, a separation of ~15x, which is comfortable.  `docs/05_control_algorithm.md`
@@ -96,7 +96,7 @@ typedef enum {
  * cannot be got wrong.
  *
  * They are re-declared rather than reused so that the Control layer does not
- * have to include a protocol header — the dependency would point upward and
+ * have to include a protocol header —the dependency would point upward and
  * make `cascade.c` untestable without the protocol module.
  * @{ */
 #define TP_CASCADE_LOOP_POSITION 0u /**< Outer position loop.                 */
@@ -135,7 +135,18 @@ typedef struct {
     uint32_t pos_saturated_count;/**< Periods with the outer loop clamped.  */
     uint32_t tracking_error_count;/**< Periods where |e_pos| exceeded 5 deg. */
     float    max_position_error;/**< Worst |position error| since reset.    */
-    float    rms_position_error;/**< Running RMS, for settling analysis.    */
+    /**
+     * @brief Running **mean square** of the position error, mrad^2.
+     *
+     * The running mean of the squares is what can be accumulated in O(1) with
+     * respect to the sample count; the RMS is its square root and is *not* that
+     * quantity.  The field used to be called `rms_position_error` and was
+     * documented as "running RMS" while holding the mean square, so every reader
+     * - and any report that quoted it - was out by a square root.  The name now
+     * says what is stored, and @ref tp_cascade_rms_position_error is the accessor
+     * that takes the root.
+     */
+    float    mean_sq_position_error;
 
     int      initialised;   /**< Non-zero after a successful init.          */
 } tp_cascade_t;
@@ -228,7 +239,7 @@ tp_status_t tp_cascade_set_velocity_reference(tp_cascade_t *c, float mrad_s);
  * The feed-forward is added to the **inner loop's reference**, not to its
  * output.  Adding it to the output would bypass the velocity limiter; adding it
  * to the reference means the inner loop still enforces the speed limit and the
- * feed-forward is therefore always achievable — a subtle but important detail.
+ * feed-forward is therefore always achievable —a subtle but important detail.
  *
  * @param[in,out] c        Instance.
  * @param[in]     enc      Joint encoder, already sampled or sampled here.
@@ -266,6 +277,18 @@ float tp_cascade_position_ref(const tp_cascade_t *c);
  * @return Error in milliradians.
  */
 float tp_cascade_position_error(const tp_cascade_t *c);
+
+/**
+ * @brief Root-mean-square position error since the last statistics reset.
+ *
+ * The quantity a settling analysis actually wants.  It is computed on demand
+ * from the running mean square rather than accumulated directly, because a
+ * running RMS cannot be updated in constant time.
+ *
+ * @param[in] c  Instance.
+ * @return RMS error in milliradians; 0 when no samples have been taken.
+ */
+float tp_cascade_rms_position_error(const tp_cascade_t *c);
 
 /**
  * @brief Latest duty demand.

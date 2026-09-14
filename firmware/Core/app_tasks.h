@@ -177,7 +177,7 @@ typedef struct {
      *
      * This is the **baseline arm of Experiment 03**.  In position-only mode the
      * jaws close to a fixed gap and hold whatever force that produces, with no
-     * force feedback in the loop at all 鈥?which is how the first generation of
+     * force feedback in the loop at all —which is how the first generation of
      * this machine worked, and why it damaged buds.
      *
      * It ships as a selectable mode rather than being left out because the

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file    force_control.c
  * @brief   Implementation of the flexible gripping controller.
  * @copyright MIT License, see LICENSE.
@@ -304,8 +304,10 @@ tp_status_t tp_force_control_update(tp_force_control_t *fc, tp_gripper_t *grip,
             grip_enter(fc, TP_GRIP_CONTACT_DETECT, now_ms);
             /* Stop closing while the contact is confirmed: continuing to close
              * at 6 mm/s for the 3-sample debounce window would add roughly
-             * 0.036 mm of penetration, i.e. about 11 mN, which is acceptable
-             * but unnecessary. */
+             * 0.018 mm of penetration, i.e. about 6 mN, which is acceptable
+             * but unnecessary.  (The window is 3 samples at the 1 ms control
+             * period.  While the force loop ran at 100 Hz this figure was
+             * 0.036 mm / 11 mN; the arithmetic was right for the wrong rate.) */
             (void)tp_gripper_set_velocity_mm_s(grip, 0.0f);
             fc->contact_force_n = force;
         } else {
@@ -469,16 +471,28 @@ tp_status_t tp_force_control_update(tp_force_control_t *fc, tp_gripper_t *grip,
 
 tp_status_t tp_force_control_abort(tp_force_control_t *fc, tp_gripper_t *grip)
 {
+    int was_active;
+
     if ((fc == NULL) || (fc->initialised == 0)) {
         return TP_ERR_PARAM;
     }
+    /* Abort is called from every stop path, including states that were never
+     * gripping, so the log has to be conditional on there having been something
+     * to abort.  The first version logged unconditionally and the start-up trace
+     * contained three identical "sequence aborted" lines before the machine had
+     * done anything at all - a log that cries wolf at t = 0 is a log whose later
+     * lines stop being read. */
+    was_active = (fc->state != TP_GRIP_IDLE) ? 1 : 0;
+
     (void)tp_pid_reset(&fc->force_pid);
     if (grip != NULL) {
         (void)tp_gripper_open(grip);
     }
     fc->state = TP_GRIP_IDLE;
     fc->velocity_cmd_mm_s = 0.0f;
-    LOG_INFO(TP_MOD_GRIPPER, "sequence aborted, jaws opening");
+    if (was_active != 0) {
+        LOG_INFO(TP_MOD_GRIPPER, "sequence aborted, jaws opening");
+    }
     return TP_OK;
 }
 

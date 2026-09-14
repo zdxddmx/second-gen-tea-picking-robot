@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file    config.h
  * @brief   Central compile-time configuration for the tea-picking robot firmware.
  *
@@ -138,7 +138,21 @@
 #define TP_JOINT_MIN_MRAD     (-90000.0f) /**< -90.000 deg soft limit.         */
 #define TP_JOINT_MAX_MRAD     ( 90000.0f) /**< +90.000 deg soft limit.         */
 #define TP_JOINT_HOME_MRAD    (       0.0f)
-#define TP_JOINT_MAX_SPEED_MRAD_S ( 60000.0f) /**< 60 deg/s.                  */
+/**
+ * @brief Joint speed soft limit, mrad/s.
+ *
+ * **40 000 mrad/s = 40 rad/s**, which is 67 % of the drive's no-load speed
+ * (`V_bus / Ke = 24 / 0.4 = 60 rad/s`).  The margin is deliberate: a speed
+ * command at the no-load speed can only be reached at *zero* torque, so a limit
+ * set there is not a limit the controller can regulate to - it is a value the
+ * axis passes through on its way to stalling.  Two thirds leaves enough voltage
+ * headroom for the drive to still produce accelerating and holding torque at the
+ * limit, which is what makes the clamp meaningful.
+ *
+ * A unit test enforces the inequality, having been written after the first
+ * revision set this value *exactly* to the no-load speed.
+ */
+#define TP_JOINT_MAX_SPEED_MRAD_S ( 40000.0f)
 #define TP_JOINT_MAX_ACCEL_MRAD_S2 (200000.0f) /**< Implied by the profile.  *//** @} */
 
 /** @name Gripper (linear jaw) limits. @{ */
@@ -162,7 +176,7 @@
  * This number was got wrong in the first revision and the mistake is worth
  * recording: the initial value was 4 000 per-mille/s, which takes 250 ms to
  * sweep the full range.  That is not a slew limiter, it is a dominant lag
- * inside the velocity loop — the loop had roughly 60 degrees of unmodelled
+ * inside the velocity loop —the loop had roughly 60 degrees of unmodelled
  * phase lag at its crossover frequency and oscillated with an amplitude of
  * tens of thousands of milliradians per second.  The lesson is that any
  * actuator-rate limit has to be checked against the loop bandwidth it sits
@@ -202,8 +216,8 @@
 #define TP_POS_PID_KD        (  0.0f)
 #define TP_POS_PID_FF_GAIN   (  1.0f)  /**< Velocity feed-forward gain.      */
 #define TP_POS_PID_IMAX      ( 2000.0f)/**< Integral clamp, mrad/s.          */
-#define TP_POS_PID_OUT_MAX   ( 60000.0f)/**< = TP_JOINT_MAX_SPEED_MRAD_S.    */
-#define TP_POS_PID_OUT_MIN   (-60000.0f)
+#define TP_POS_PID_OUT_MAX   ( 40000.0f)/**< = TP_JOINT_MAX_SPEED_MRAD_S.    */
+#define TP_POS_PID_OUT_MIN   (-40000.0f)
 #define TP_POS_PID_TAU_D_S   ( 0.002f) /**< Derivative low-pass time const.  */
 /** @} */
 
@@ -212,21 +226,33 @@
  * Input  : velocity error in mrad/s.
  * Output : PWM duty in per-mille.
  *
- * **Tuning basis.**  The duty-to-speed path is, from the electrical and
- * mechanical parameters in `plant_model.c`, a first-order lag with a DC gain of
- * about 480 mrad/s per per-mille and a mechanical time constant of
- * `J / (b + Kt*Ke/R) = 0.05 s`.  The standard PI placement
- * `Kp = tau / (K * Tc)` with a desired closed-loop time constant `Tc = 20 ms`
- * gives `Kp = 0.05 / (480 * 0.02) = 0.0052`, and `Ki = Kp / tau = 0.104`.  The
- * shipped values are those rounded to one significant figure.
+ * **Tuning basis.**  From the electrical and mechanical parameters in
+ * `plant_model.c`:
  *
- * The first revision used `Kp = 0.015`, three times higher, which put the
- * crossover at roughly 23 Hz and left too little phase margin once the
- * electrical lag and the duty slew limiter were accounted for.  The resulting
- * limit cycle is what the initial simulation run showed.
+ * | Quantity | Value | Derivation |
+ * |---|---|---|
+ * | DC gain | 60 mrad/s per per-mille | `V_bus / Ke / 1000 = 24 / 0.4 / 1000`, expressed in mrad |
+ * | Electrical damping | 0.08 N路m路s/rad | `Kt路Ke/R = 0.4路0.4/2` |
+ * | Viscous damping | 3e-5 N路m路s/rad | mechanical, 2600x smaller |
+ * | Mechanical time constant | 0.031 s | `J / (b + Kt路Ke/R)` |
+ *
+ * The electrical damping dominates the viscous term by more than three orders of
+ * magnitude, so the time constant is set almost entirely by `Kt路Ke/R` —which is
+ * the usual situation for a geared DC drive and the reason a separate viscous
+ * coefficient is nearly irrelevant to the tuning.
+ *
+ * The standard PI placement `Kp = tau / (K 路 Tc)` with `Tc = 20 ms` gives
+ * `Kp = 0.031 / (60 路 0.02) = 0.026` and `Ki = Kp / tau = 0.83`.  Those are the
+ * shipped values.
+ *
+ * @note The gains changed when the torque constant was corrected from 2.0 to
+ *       0.4 N路m/A to satisfy `Kt = Ke`.  The DC gain fell by a factor of five
+ *       and the time constant by a factor of 1.6, so the old gains would now
+ *       give a loop that is both too slow and too weakly damped.  Retuning is
+ *       part of the correction, not a separate change.
  * @{ */
-#define TP_VEL_PID_KP        ( 0.005f)
-#define TP_VEL_PID_KI        ( 0.10f)
+#define TP_VEL_PID_KP        ( 0.026f)
+#define TP_VEL_PID_KI        ( 0.83f)
 #define TP_VEL_PID_KD        (  0.0f)
 #define TP_VEL_PID_FF_GAIN   (  0.0f)  /**< Torque feed-forward gain.        */
 #define TP_VEL_PID_IMAX      (250.0f)  /**< Integral clamp, permille.        */
@@ -263,7 +289,6 @@
 #define TP_FORCE_CONTACT_N          (0.15f) /**< Contact detected threshold.  */
 #define TP_FORCE_SOFT_LIMIT_N       (3.50f) /**< Warning threshold.           */
 #define TP_FORCE_MAX_N              (5.00f) /**< Hard limit -> immediate stop.*/
-#define TP_FORCE_RELEASE_N          (0.10f) /**< Regarded as "no load".       */
 #define TP_FORCE_BAND_N             (0.10f) /**< +-band considered "in place".*/
 /** @} */
 
@@ -271,12 +296,26 @@
 #define TP_APPROACH_FAST_SPEED_MM_S ( 40.0f) /**< Coarse approach speed.      */
 #define TP_APPROACH_SLOW_SPEED_MM_S (  6.0f) /**< Fine approach speed.        */
 #define TP_APPROACH_SLOW_AT_MM      (  4.0f) /**< Switch distance to target.  */
-#define TP_GRIPPER_BACKOFF_MM       ( 12.0f) /**< Retreat after release.      */
 #define TP_GRIPPER_SETTLE_MS        (  80u)  /**< Force settle time.          */
 /** @} */
 
 /** @name Adaptive force threshold. @{ */
-#define TP_FORCE_ADAPT_ENABLE       (1)
+/**
+ * @brief Enable the adaptive grip-force threshold.
+ *
+ * **Off, and it must stay off until it has been calibrated against real buds.**
+ * The framework is complete and unit-tested, but its two parameters (the EMA
+ * rate and the margin) were chosen from simulation and have never been validated
+ * against a physical tea stem.  Shipping it enabled would mean the robot
+ * silently re-tunes its own grip force using an unvalidated model, and a
+ * reviewer would be right to call that overclaiming.
+ *
+ * The earlier value here was 1 while the header documentation said "disabled by
+ * default" - the code and its own documentation disagreed, which is the kind of
+ * inconsistency that survives review because both statements look reasonable in
+ * isolation.
+ */
+#define TP_FORCE_ADAPT_ENABLE       (0)
 #define TP_FORCE_ADAPT_ALPHA        (0.05f)/**< EMA rate for the observed force. */
 #define TP_FORCE_ADAPT_MARGIN_N     (0.60f) /**< Target = observed + margin.  */
 /** @} */
@@ -329,16 +368,31 @@
  * correct but would make the detector slow enough to be useless on a real jam;
  * a much lower one would arm on the noise floor and trip on every move.
  *
- * 80 per-mille is 8 % duty, i.e. about 1.9 V across the winding — clearly a
+ * 80 per-mille is 8 % duty, i.e. about 1.9 V across the winding —clearly a
  * deliberate torque command rather than a residual. */
 #define TP_STALL_PWM_THRESHOLD   (80.0f)
 /** @brief Time the above conditions must hold before ERR_MOTOR_STALL. */
 #define TP_STALL_TRIP_MS         (300u)
 /** @brief Maximum |dq/dt| physically plausible, mrad/s^2. Above => encoder fault. */
 #define TP_ENCODER_MAX_ACCEL_MRAD_S2 (4000000.0f)
-/** @brief Force-sensor plausibility window, N. Outside => ERR_SENSOR. */
-#define TP_SENSOR_FORCE_MIN_N    (-20.0f)
-#define TP_SENSOR_FORCE_MAX_N    ( 50.0f)
+/**
+ * @name Force-sensor plausibility window, N.
+ *
+ * Anything outside this window is declared a sensor fault.  The window is
+ * **derived from the channel's own usable range** rather than typed in, because
+ * the first revision hard-coded `(-20, +50)` N against a front end whose ADC
+ * saturates at +-16.4 N: no reachable reading could ever fall outside the
+ * window, so the check was dead code that looked like a protection.
+ *
+ * A 20 % margin over the usable range is what makes the check meaningful.  It
+ * catches the cases the saturation flag cannot: a bridge that has unbalised by
+ * a few hundred counts (still inside the ADC range, but not a force this machine
+ * can produce), and a genuinely broken reference.
+ * @{ */
+#define TP_SENSOR_FORCE_WINDOW_MARGIN (1.2f)
+#define TP_SENSOR_FORCE_MIN_N (-TP_FORCE_USABLE_RANGE_N * TP_SENSOR_FORCE_WINDOW_MARGIN)
+#define TP_SENSOR_FORCE_MAX_N ( TP_FORCE_USABLE_RANGE_N * TP_SENSOR_FORCE_WINDOW_MARGIN)
+/** @} */
 /** @brief ADC raw plausibility window, counts (12-bit). */
 #define TP_SENSOR_ADC_MIN_COUNTS (5u)
 #define TP_SENSOR_ADC_MAX_COUNTS (4090u)
@@ -383,13 +437,13 @@
  * front-end sensitivity above `40 mV/N`.  A 10 N cell at 1 mV/V with 5 V
  * excitation gives `5 mV / 10 N = 0.5 mV/N`, so a gain of 201 is enough
  * (`100.5 mV/N`, i.e. an **8.0 mN LSB**), while a 50 N cell would only give
- * `0.1 mV/N` and would need a gain of 400 — at which point the amplifier's own
+ * `0.1 mV/N` and would need a gain of 400 —at which point the amplifier's own
  * offset drift and the bridge's thermal drift dominate the reading.  Choosing
  * the sensor so the electronics stay simple is the better engineering answer
  * than amplifying a small signal by 400.
  *
  * Check the headroom: `100.5 mV/N * 10 N = 1005 mV` at rated load, comfortably
- * under the 3.3 V reference, and the ADC reaches full scale at 32.8 N — far
+ * under the 3.3 V reference, and the ADC reaches full scale at 32.8 N —far
  * above the 5 N hard limit, so overload is detected by the firmware rather
  * than clipping silently against the rail.
  *
@@ -441,7 +495,7 @@
  * and a usable range of about +-16.4 N about mid-scale.  Compare that with
  * @ref TP_FORCE_TARGET_N = 2.2 N: the target sits at ~274 counts above zero,
  * so one LSB is 0.36 % of the reading.  That is the number that justifies the
- * median + moving-average + low-pass chain in @ref filters.h — without it the
+ * median + moving-average + low-pass chain in @ref filters.h —without it the
  * force loop would be chasing quantisation noise rather than the tea stem.
  * @{ */
 #define TP_FORCE_CAL_ZERO_COUNTS (2048.0f) /**< ADC counts at zero load.      */

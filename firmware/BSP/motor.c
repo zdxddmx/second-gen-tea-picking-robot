@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file    motor.c
  * @brief   Implementation of the motor drive abstraction.
  * @copyright MIT License, see LICENSE.
@@ -20,6 +20,15 @@
  * the trip threshold hovers on it and trips on the discrete duty steps.
  */
 #define MOTOR_FOLDBACK_TARGET_FRACTION 0.9f
+
+/**
+ * @brief Samples above the peak rating before the drive is latched out.
+ *
+ * At 1 kHz this is 2 ms - long enough that a single ADC glitch cannot trip it,
+ * short enough that it is a genuine short-time rating rather than a second
+ * continuous one.
+ */
+#define MOTOR_PEAK_TRIP_SAMPLES ((TP_MOTOR_PEAK_WINDOW_MS / 2u) + 1u)
 
 /**
  * @brief Smallest fold-back ratio applied in one sample.
@@ -131,7 +140,7 @@ tp_status_t tp_motor_update(tp_motor_t *motor, float dt_s)
          * Returning immediately here is the obvious thing to do and it is a bug:
          * `tp_motor_clear_fault` refuses while the measured current is above the
          * limit, so a channel that stops refreshing its current reading after
-         * being disabled can *never* be cleared 鈥?the stale value stays above
+         * being disabled can *never* be cleared —the stale value stays above
          * the limit forever and the drive is latched out for good.  The reading
          * costs one ADC result and it is what makes recovery observable. */
         (void)tp_platform_motor_current_ma(motor->ch, &motor->current_ma);
@@ -179,9 +188,31 @@ tp_status_t tp_motor_update(tp_motor_t *motor, float dt_s)
         motor->current_ma = current;
     }
 
+    /* Peak limit first: it is the tighter of the two bounds and it is the one
+     * that protects the silicon.  A current above the *peak* rating is a fault
+     * however brief, so it is judged against a short window rather than the
+     * continuous debounce. */
+    if (TP_FABS(motor->current_ma) > TP_PEAK_CURRENT_MA) {
+        motor->peak_samples++;
+        if (motor->peak_samples >= MOTOR_PEAK_TRIP_SAMPLES) {
+            if (motor->fault == 0) {
+                LOG_ERROR(TP_MOD_MOTOR,
+                          "channel %d peak over-current: %.0f mA > %.0f mA",
+                          (int)motor->ch, (double)motor->current_ma,
+                          (double)TP_PEAK_CURRENT_MA);
+            }
+            motor->fault = 1;
+            (void)tp_platform_motor_enable(motor->ch, 0);
+            motor->enabled = 0;
+            motor->duty_applied = 0.0f;
+            return TP_ERR_FAULT_ACTIVE;
+        }
+    } else {
+        motor->peak_samples = 0u;
+    }
+
     if (TP_FABS(motor->current_ma) > motor->current_limit_ma) {
         float ratio;
-
         motor->overcurrent_samples++;
         motor->last_overcurrent_ms = tp_platform_time_ms();
         motor->foldback_events++;
@@ -193,7 +224,7 @@ tp_status_t tp_motor_update(tp_motor_t *motor, float dt_s)
          * The first version computed `allowed = full_scale * (limit / current)`,
          * which is an absolute ceiling rather than a reduction.  At a 300
          * per-mille command drawing 3.6 A that formula gives a ceiling of 750
-         * per-mille 鈥?*above* the command 鈥?so nothing was reduced, the current
+         * per-mille —*above* the command —so nothing was reduced, the current
          * stayed at 3.6 A, and the over-current protection tripped on a drive
          * that was behaving perfectly correctly.  Scaling the present duty
          * instead (`duty *= 2700 / 3600`) brings it to 225 per-mille, i.e.
@@ -287,7 +318,13 @@ tp_status_t tp_motor_disable(tp_motor_t *motor)
     motor->enabled = 0;
     motor->duty_cmd = 0.0f;
     motor->duty_applied = 0.0f;
-    LOG_WARN(TP_MOD_MOTOR, "channel %d driver disabled", (int)motor->ch);
+    /* INFO, not WARN.  This function cannot tell why it was called, and the two
+     * callers are a command (shutdown, abort) and a consequence (the safety
+     * monitor cutting the drive after raising a fault, which logs its own
+     * reason at the right severity).  Reporting a commanded shutdown as a
+     * warning puts a WARN in every clean run and teaches the reader to ignore
+     * the level entirely. */
+    LOG_INFO(TP_MOD_MOTOR, "channel %d driver disabled", (int)motor->ch);
     return st;
 }
 

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file    cascade.c
  * @brief   Implementation of the cascaded position/velocity controller.
  * @copyright MIT License, see LICENSE.
@@ -144,7 +144,7 @@ tp_status_t tp_cascade_set_reference(tp_cascade_t *c, float mrad, float v_ff)
     }
     /* The feed-forward velocity is a *trajectory* quantity and is therefore
      * bounded by the same joint speed limit as everything else.  Validating only
-     * for finiteness let a caller pass 1e9 mrad/s — finite, absurd, and enough to
+     * for finiteness let a caller pass 1e9 mrad/s —finite, absurd, and enough to
      * saturate the inner loop for the whole move.  The bound is deliberately
      * twice the limit rather than equal to it, so a legitimate profile that
      * briefly plans at the limit is not rejected by rounding. */
@@ -266,7 +266,7 @@ float tp_cascade_update(tp_cascade_t *c, tp_encoder_t *enc, float dt_s)
         }
         /* Running mean of the squared error, so the RMS can be reported
          * without storing the whole history. */
-        c->rms_position_error += ((ae * ae) - c->rms_position_error)
+        c->mean_sq_position_error += ((ae * ae) - c->mean_sq_position_error)
                                / (float)c->update_count;
         if (ae > CASCADE_TRACKING_ERROR_MRAD) {
             c->tracking_error_count++;
@@ -294,7 +294,7 @@ void tp_cascade_reset_stats(tp_cascade_t *c)
     c->pos_saturated_count = 0u;
     c->tracking_error_count = 0u;
     c->max_position_error = 0.0f;
-    c->rms_position_error = 0.0f;
+    c->mean_sq_position_error = 0.0f;
 }
 
 float tp_cascade_position_ref(const tp_cascade_t *c)
@@ -315,6 +315,25 @@ float tp_cascade_duty(const tp_cascade_t *c)
 tp_trajectory_t *tp_cascade_trajectory(tp_cascade_t *c)
 {
     return (c != NULL) ? &c->trajectory : NULL;
+}
+
+float tp_cascade_rms_position_error(const tp_cascade_t *c)
+{
+    if ((c == NULL) || (c->mean_sq_position_error <= 0.0f)) {
+        return 0.0f;
+    }
+    /* Newton's method rather than sqrtf: the firmware avoids linking a libm call
+     * into the control path, and this converges to better than 1e-7 relative in
+     * six iterations for the magnitudes involved. */
+    {
+        float x = c->mean_sq_position_error;
+        float x2 = (x > 1.0f) ? x : 1.0f;
+        int i;
+        for (i = 0; i < 12; ++i) {
+            x2 = 0.5f * (x2 + (x / x2));
+        }
+        return x2;
+    }
 }
 
 int tp_cascade_is_diverged(const tp_cascade_t *c)

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file    app_sequence.c
  * @brief   Task bodies and the pick-sequence orchestration.
  *
@@ -22,7 +22,7 @@
  *      |-- acts on the resulting state (start a trajectory, open the jaws)
  * @endverbatim
  *
- * That direction of control 閳?the FSM *observes* the controller 閳?is what keeps
+ * That direction of control 闁?the FSM *observes* the controller 闁?is what keeps
  * the 1 kHz force loop free of state-machine branches, and it means a change to
  * the sequence cannot alter the control law.
  *
@@ -104,7 +104,7 @@ static void app_map_grip_state(const tp_app_context_t *app,
  * This is what a real servo drive does when it is "stopped": the position loop
  * stays closed and the axis resists gravity.  Commanding zero duty and leaving
  * the loop open looks equivalent on a friction-dominated bench axis and is
- * completely wrong on a gravity-loaded one 閳?the first PC simulation run of this
+ * completely wrong on a gravity-loaded one 闁?the first PC simulation run of this
  * firmware made exactly that mistake, and the joint was measured drifting at a
  * steady 148 mrad/s with the drive disabled, because the 20 mN*m gravity load
  * balanced the Coulomb and back-EMF braking torques at that speed.
@@ -263,6 +263,23 @@ void tp_app_control_step(void *arg)
     }
     app->control_cycles++;
 
+    /* Calibration mode inhibits motion.
+     *
+     * `tp_robot_mode_t` has always documented CALIBRATE as "motion inhibited",
+     * and until now nothing enforced it: the mode was accepted, recorded, and
+     * then ignored.  That is the worst kind of gap, because the operator has been
+     * told by the user interface that the robot will not move.
+     *
+     * The check is here, in the task that writes the drive, rather than in the
+     * command handler that sets the mode: a mode flag that only the setter
+     * respects is a suggestion, not an interlock. */
+    if (app->mode == TP_MODE_CALIBRATE) {
+        (void)tp_motor_stop(&app->joint_motor, 0u);
+        (void)tp_motor_update(&app->joint_motor, TP_CONTROL_DT_S);
+        (void)tp_gripper_stop(&app->gripper);
+        (void)tp_gripper_update(&app->gripper, TP_CONTROL_DT_S);
+        return;
+    }
     /* Wake the motor abstraction's update path even when the cascade is off, so
      * that the slew limiter still ramps a commanded duty down to zero instead
      * of leaving the last value latched in the timer register. */
@@ -296,12 +313,64 @@ void tp_app_control_step(void *arg)
     }
     (void)tp_motor_update(&app->joint_motor, TP_CONTROL_DT_S);
 
-    /* The gripper is driven from the control task too, not the robot task: the
-     * force loop runs at 1 kHz (see docs/06_force_control.md for why), and the
-     * jaw's velocity command must reach the motor in the same period it was
-     * computed in. */
+    /* --- the gripping controller, at 1 kHz ---------------------------------
+     *
+     * This is where the force loop belongs and it is worth stating why, because
+     * the first revision serviced it from the 100 Hz robot task while the
+     * documentation claimed 1 kHz.  Nothing failed, which is exactly the problem
+     * with that kind of mismatch: the docs, the gains and the observed behaviour
+     * were all consistent with each other and all wrong together.
+     *
+     * The force loop's output is a *jaw velocity*, and at contact it must be able
+     * to reverse.  At 100 Hz the worst-case reaction to a force step is 10 ms, in
+     * which the jaw travels 0.4 mm at the 40 mm/s approach speed and the force
+     * rises by 0.12 N on a 0.30 N/mm stem - a tenth of the whole settling band,
+     * spent before the controller has had a single chance to respond.  At 1 kHz
+     * that becomes 0.012 N.
+     *
+     * The state machine still *observes* the controller from the robot task, so
+     * the separation of concerns the design calls for is preserved: the control
+     * law runs here, and the sequence decisions stay there.
+     */
+    if ((tp_fsm_state(&app->fsm) == TP_STATE_CONTACT) ||
+        (tp_fsm_state(&app->fsm) == TP_STATE_GRIP) ||
+        (tp_fsm_state(&app->fsm) == TP_STATE_PICK) ||
+        (tp_fsm_state(&app->fsm) == TP_STATE_RELEASE)) {
+        st = tp_force_control_update(&app->grip_ctl, &app->gripper, &app->force,
+                                     tp_platform_time_ms(), TP_CONTROL_DT_S);
+        if (st == TP_ERR_FAULT_ACTIVE) {
+            /* Report the trip through the fault registry here rather than in the
+             * robot task, so the fault and the event that caused it are recorded
+             * in the same period. */
+            (void)tp_fault_raise(&app->faults,
+                                 tp_force_control_fault_code(&app->grip_ctl),
+                                 0u, tp_platform_time_ms());
+            tp_fsm_set_fault_state(&app->fsm, 1);
+        }
+    }
+
+    /* The jaws are still driven from this task, and *after* the force update, so
+     * the velocity command computed above reaches the motor in the same period it
+     * was computed in rather than one period later.
+     *
+     * While a fault blocks motion the joint is stopped, but the jaws are
+     * deliberately *opened* rather than stopped.  A jaw that is merely stopped
+     * goes on applying whatever force it was applying when the fault arrived -
+     * and for an over-force trip that is precisely the condition the protection
+     * exists to end.  Open is also the direction the platform's own fail-safe
+     * takes when the driver is de-energised (`plant_model.c` springs the jaws
+     * open on an emergency kill), so commanding it here makes the safe state
+     * explicit instead of leaving it to the stem to push the jaws apart.  The
+     * first revision stopped the jaws here, and scenario D only released the bud
+     * because the stem's own reaction force happened to back-drive the jaw open;
+     * on a softer bud it would have held the trip force indefinitely.
+     *
+     * Note the joint is *not* in this path: `app_hold_position` remains the
+     * response for the joint, because a gravity-loaded axis that is merely
+     * disabled drifts. */
     if (tp_fault_blocks_motion(&app->faults) != 0) {
-        (void)tp_gripper_stop(&app->gripper);
+        (void)tp_gripper_set_velocity_mm_s(&app->gripper,
+                                          TP_APPROACH_FAST_SPEED_MM_S);
     }
     (void)tp_gripper_update(&app->gripper, TP_CONTROL_DT_S);
 }
@@ -394,7 +463,7 @@ void tp_app_safety_step(void *arg)
 
     /* Report only on a *change* of the overall fault state.  The safety monitor
      * re-detects an active condition on every period, so logging whenever it
-     * reports a raise would emit the same line at 10 Hz 鈥?which buries the
+     * reports a raise would emit the same line at 10 Hz 閳?which buries the
      * first occurrence, the only one that carries information, and floods the
      * very link the log is meant to help diagnose. */
     {
@@ -460,7 +529,7 @@ void tp_app_comm_step(void *arg)
 }
 
 /* =========================================================================
- * 100 Hz robot task 閳?the pick sequence orchestration
+ * 100 Hz robot task 闁?the pick sequence orchestration
  * ========================================================================= */
 
 void tp_app_robot_step(void *arg)
@@ -470,7 +539,6 @@ void tp_app_robot_step(void *arg)
     tp_event_t event = TP_EV_NONE;
     tp_robot_state_t state;
     tp_grip_state_t grip;
-    tp_status_t st;
 
     if ((app == NULL) || (app->initialised == 0)) {
         return;
@@ -489,7 +557,7 @@ void tp_app_robot_step(void *arg)
      * controller must be serviced in all four.  Leaving RELEASE out (as the
      * first revision did) means the controller never reaches its IDLE state, the
      * RELEASE_DONE event is never generated, and the robot sits with the jaws
-     * open forever 鈥?a hang that looks like a state-machine bug and is actually
+     * open forever 閳?a hang that looks like a state-machine bug and is actually
      * a missing service call. */
     if ((app->grip_position_only != 0) &&
         ((state == TP_STATE_CONTACT) || (state == TP_STATE_GRIP) ||
@@ -503,22 +571,16 @@ void tp_app_robot_step(void *arg)
         app_map_position_only_state(app, &event);
     } else if ((state == TP_STATE_CONTACT) || (state == TP_STATE_GRIP) ||
         (state == TP_STATE_PICK) || (state == TP_STATE_RELEASE)) {
-        st = tp_force_control_update(&app->grip_ctl, &app->gripper, &app->force,
-                                     now, (float)TP_ROBOT_PERIOD_MS / 1000.0f);
+        /* The controller itself already ran in the 1 kHz control task; this task
+         * only *reads* its state and turns progress into FSM events.  That is the
+         * separation the design calls for, and it is why a change to the sequence
+         * cannot alter the control law.
+         *
+         * The only thing done here is the sensor-health check, because falling
+         * back to position-only gripping is a *sequence* decision rather than a
+         * control one, and it has to be recorded as a fault since it changes the
+         * damage risk of the cycle. */
         grip = tp_force_control_state(&app->grip_ctl);
-        if (st == TP_ERR_FAULT_ACTIVE) {
-            /* Report the *actual* trip reason.  The first revision mapped every
-             * trip to ERR_FORCE_OVERLOAD, so a contact timeout - which usually
-             * means the vision target was wrong, not that anything was crushed -
-             * sent the operator to inspect the load cell. */
-            (void)tp_fault_raise(&app->faults,
-                                 tp_force_control_fault_code(&app->grip_ctl),
-                                 0u, now);
-            tp_fsm_set_fault_state(&app->fsm, 1);
-        }
-        /* Force control cannot run without a trustworthy sensor; falling back
-         * to position-only gripping is recorded as a fault rather than done
-         * silently, because it changes the damage risk of the cycle. */
         if (tp_force_sensor_is_faulty(&app->force) != 0) {
             (void)tp_fault_raise(&app->faults, TP_FAULT_SENSOR, 2u, now);
         }
@@ -607,7 +669,7 @@ void tp_app_robot_step(void *arg)
         /* The gripping controller owns the jaw here and commands the release
          * speed itself.  Issuing an independent `tp_gripper_open()` as well
          * would give the jaw two owners in the same period, and whichever won
-         * would depend on the order of the two calls 鈥?a class of bug that is
+         * would depend on the order of the two calls 閳?a class of bug that is
          * invisible until the ordering is changed for an unrelated reason. */
         break;
 
@@ -939,15 +1001,32 @@ uint32_t tp_app_format_status(const tp_app_context_t *app, char *buffer,
                               uint32_t capacity)
 {
     char fault_text[96];
+    char current_text[16];
+    char vbus_text[16];
     int n;
 
     if ((app == NULL) || (buffer == NULL) || (capacity == 0u)) {
         return 0u;
     }
+    /* The analogue channels hold 0.0 until the first 500 Hz sample, which is
+     * after the control task has run its first iteration.  Printing "Vbus=0.0V"
+     * at that moment states that the 24 V rail is dead - a reader has no way to
+     * tell it apart from a genuine supply failure.  "-" is the honest rendering
+     * of "no sample yet", and the same applies to the current reading. */
+    if (app->sensor_cycles > 0u) {
+        (void)tp_snprintf(current_text, sizeof(current_text), "%.0fmA",
+                          (double)app->meas_current_ma);
+        (void)tp_snprintf(vbus_text, sizeof(vbus_text), "%.1fV",
+                          (double)app->meas_vbus_v);
+    } else {
+        (void)tp_snprintf(current_text, sizeof(current_text), "-");
+        (void)tp_snprintf(vbus_text, sizeof(vbus_text), "-");
+    }
+
     (void)tp_fault_format_active(&app->faults, fault_text, sizeof(fault_text));
     n = tp_snprintf(buffer, capacity,
                     "t=%lums state=%s grip=%s mode=%u pos=%.0fmrad v=%.0fmrad/s "
-                    "F=%.3fN F*=%.2fN duty=%.0f I=%.0fmA Vbus=%.1fV "
+                    "F=%.3fN F*=%.2fN duty=%.0f I=%s Vbus=%s "
                     "cycles=%lu faults=%s",
                     (unsigned long)tp_platform_time_ms(),
                     tp_state_name(tp_fsm_state(&app->fsm)),
@@ -956,7 +1035,7 @@ uint32_t tp_app_format_status(const tp_app_context_t *app, char *buffer,
                     (double)app->meas_velocity_mrad_s, (double)app->meas_force_n,
                     (double)tp_force_control_get_force_target(&app->grip_ctl),
                     (double)tp_motor_get_duty(&app->joint_motor),
-                    (double)app->meas_current_ma, (double)app->meas_vbus_v,
+                    current_text, vbus_text,
                     (unsigned long)app->cycle_count, fault_text);
     return (n > 0) ? (uint32_t)n : 0u;
 }

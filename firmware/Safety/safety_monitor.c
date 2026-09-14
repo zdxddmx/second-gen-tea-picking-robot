@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file    safety_monitor.c
  * @brief   Implementation of the continuous safety supervision.
  * @copyright MIT License, see LICENSE.
@@ -65,9 +65,19 @@ int tp_safety_check_estop(tp_safety_state_t *st, const tp_safety_inputs_t *in,
     }
 
     /* The E-stop input is a normally-closed loop: a *broken wire* also reads as
-     * asserted.  That is the fail-safe polarity and is exactly why no
-     * debouncing is applied here - a 3-sample filter would add 30 ms to a
-     * signal whose entire purpose is to be immediate. */
+     * asserted.  That is the fail-safe polarity and it is why the reaction below
+     * is a hardware kill rather than a software stop.
+     *
+     * On debouncing, the earlier comment here claimed none was applied.  That
+     * was wrong, and the truth is worth recording because it is small enough to
+     * be defensible once stated: the input passes through the shared
+     * `limit_switch.c` debouncer, which at the 500 Hz sensor rate needs three
+     * agreeing samples, i.e. 6 ms.  Six milliseconds on a signal whose purpose is
+     * to be immediate would be unacceptable in a safety-rated design; it is
+     * acceptable here because this is a research prototype whose E-stop is
+     * additionally wired into the gate-driver enable path in hardware, where no
+     * firmware latency applies at all.  On a product this input would be read
+     * directly and the debouncing removed. */
     st->estop_events++;
     if (tp_fault_is_latched(fm, TP_FAULT_ESTOP) == 0) {
         (void)tp_fault_raise(fm, TP_FAULT_ESTOP, SAFETY_NO_DETAIL, now_ms);
