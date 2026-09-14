@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file    main_host.c
  * @brief   PC simulation entry point: runs the firmware against the physics.
  *
@@ -64,6 +64,16 @@ typedef struct {
     float    gap_mm;
     float    duty;
     float    current_ma;
+    /* The gripper's own command is in the trace because its absence made a real
+     * defect invisible: during scenario D the jaw kept closing after the
+     * over-force trip, and the joint columns said nothing about it.  A trace
+     * that shows what the machine did but not what it was told to do cannot
+     * distinguish "the controller commanded this" from "the actuator ignored
+     * the controller", which are opposite bugs with the same symptom. */
+    float    grip_cmd_mm_s;     /**< Gripper velocity command.               */
+    float    grip_applied_mm_s; /**< After the limit veto.                   */
+    float    grip_duty;         /**< Gripper duty written to the driver.     */
+    uint8_t  grip_mode;         /**< 1 = position move, 0 = velocity.        */
     uint8_t  state;
     uint8_t  grip_state;
     uint8_t  fault;
@@ -87,7 +97,8 @@ typedef struct {
 static void host_write_csv_header(FILE *f)
 {
     (void)fprintf(f, "t_ms,ref_mrad,pos_mrad,vel_mrad_s,force_n,gap_mm,"
-                     "duty_permille,current_ma,state,grip_state,fault,cycle\n");
+                     "duty_permille,current_ma,grip_cmd_mm_s,grip_applied_mm_s,"
+                     "grip_duty,grip_mode,state,grip_state,fault,cycle\n");
 }
 
 /**
@@ -98,11 +109,14 @@ static void host_write_csv_header(FILE *f)
  */
 static void host_write_csv_row(FILE *f, const host_trace_row_t *row)
 {
-    (void)fprintf(f, "%lu,%.2f,%.2f,%.2f,%.4f,%.3f,%.1f,%.1f,%u,%u,%u,%u\n",
+    (void)fprintf(f, "%lu,%.2f,%.2f,%.2f,%.4f,%.3f,%.1f,%.1f,%.2f,%.2f,%.1f,%u,"
+                     "%u,%u,%u,%u\n",
                   (unsigned long)row->t_ms, (double)row->ref_mrad,
                   (double)row->pos_mrad, (double)row->vel_mrad_s,
                   (double)row->force_n, (double)row->gap_mm, (double)row->duty,
-                  (double)row->current_ma, (unsigned)row->state,
+                  (double)row->current_ma, (double)row->grip_cmd_mm_s,
+                  (double)row->grip_applied_mm_s, (double)row->grip_duty,
+                  (unsigned)row->grip_mode, (unsigned)row->state,
                   (unsigned)row->grip_state, (unsigned)row->fault,
                   (unsigned)row->cycle);
 }
@@ -123,6 +137,10 @@ static void host_capture_row(const tp_app_context_t *app, host_trace_row_t *row)
     row->gap_mm = tp_gripper_get_gap_mm(&app->gripper);
     row->duty = tp_motor_get_duty(&app->joint_motor);
     row->current_ma = app->meas_current_ma;
+    row->grip_cmd_mm_s = app->gripper.cmd_velocity_mm_s;
+    row->grip_applied_mm_s = app->gripper.applied_velocity_mm_s;
+    row->grip_duty = app->gripper.cmd_duty;
+    row->grip_mode = (uint8_t)((app->gripper.position_mode != 0) ? 1u : 0u);
     row->state = (uint8_t)tp_fsm_state(&app->fsm);
     row->grip_state = (uint8_t)tp_force_control_state(&app->grip_ctl);
     row->fault = (uint8_t)tp_fault_highest(&app->faults);
@@ -201,7 +219,7 @@ static const host_scenario_expect_t *host_scenario_lookup(char letter)
  * Every scenario that is supposed to run a cycle injects its own target, so the
  * scenarios are independent of each other and of the default branch.  The first
  * revision of this function relied on the `default` branch to supply the
- * target, which silently left scenarios C, E and F with nothing to do 鈥?they
+ * target, which silently left scenarios C, E and F with nothing to do —they
  * ran for nine seconds in `IDLE` and "failed" for a reason that had nothing to
  * do with what they were testing.
  *
@@ -277,8 +295,8 @@ static void host_apply_scenario(tp_app_context_t *app, char scenario, uint32_t t
          * The link supervision has to be *armed* before it can time out: a
          * robot that has never heard from a host must not report a link loss,
          * because at boot there is nothing to lose.  So the scenario first
-         * injects one genuine heartbeat frame on the host bus 鈥?the same frame
-         * a real host would send, built by the same encoder 鈥?and then goes
+         * injects one genuine heartbeat frame on the host bus —the same frame
+         * a real host would send, built by the same encoder —and then goes
          * silent.  The timeout is therefore exercised through the production
          * path, exactly as it would be by unplugging the cable. */
         if (t_ms == 200u) {
@@ -300,16 +318,23 @@ static void host_apply_scenario(tp_app_context_t *app, char scenario, uint32_t t
          *
          * Two details make this a real test rather than a formality.  First,
          * the jam is applied *before* the move, because a stall detector that
-         * only looks at speed cannot distinguish "stopped" from "stalled" 鈥?the
+         * only looks at speed cannot distinguish "stopped" from "stalled" —the
          * commanded duty has to be high for the condition to mean anything.
          * Second, the target is a long move (57 degrees), so the position loop
          * genuinely demands torque for long enough to be detected.  A small
          * move into a jam produces a small duty demand and correctly does not
          * trip anything. */
         if (t_ms == 900u) {
+            /* The drive's peak torque is Kt * I_cont = 0.4 N*m/A * 3 A = 1.2
+             * N*m, so 8.0 N*m is 6.7x what the drive can produce: a genuine
+             * jam, not a heavy load.  (This message said "above the drive's
+             * 6.0 N*m capability" while Kt was still 2.0 N*m/A.  The jam was
+             * always real - the arithmetic behind the claim was not.) */
             LOG_INFO(TP_MOD_TEST,
-                     "scenario F: clamping the joint (8.0 N*m, above the drive's "
-                     "6.0 N*m capability)");
+                     "scenario F: clamping the joint (8.0 N*m, %.1fx the drive's "
+                     "1.2 N*m capability)",
+                     (double)(8.0f / (TP_PLANT_MOTOR_KT_NM_PER_A *
+                                      (TP_MAX_CURRENT_MA / 1000.0f))));
             tp_plant_set_jam(plant, 8.0f);
         }
         if (t_ms == 1200u) {
