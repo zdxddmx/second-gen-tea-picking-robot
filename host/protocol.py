@@ -351,6 +351,7 @@ StartPick = namedtuple("StartPick", "target_id")
 SetPid = namedtuple("SetPid", "loop_id kp ki kd")
 GetPid = namedtuple("GetPid", "loop_id")
 SetMode = namedtuple("SetMode", "mode")
+CalibrateForce = namedtuple("CalibrateForce", "kind")
 SetForceTarget = namedtuple("SetForceTarget", "force_mN")
 Ack = namedtuple("Ack", "acked_cmd")
 HeartbeatAck = namedtuple("HeartbeatAck", "seq")
@@ -383,6 +384,7 @@ _PAYLOAD_SPEC = {
     CMD.EMERGENCY_STOP: ("", ()),
     CMD.CLEAR_FAULT: ("", ()),
     CMD.SET_MODE: ("<B", ("mode",)),
+    CMD.CALIBRATE_FORCE: ("<B", ("kind",)),
     CMD.GET_FAULT: ("", ()),
     CMD.SET_FORCE_TARGET: ("<H", ("force_mN",)),
     CMD.ACK: ("<B", ("acked_cmd",)),
@@ -505,6 +507,11 @@ def encode_clear_fault():
 def encode_set_mode(mode):
     # type: (int) -> bytes
     return struct.pack("<B", int(mode) & 0xFF)
+
+
+def encode_calibrate_force(kind):
+    # type: (int) -> bytes
+    return struct.pack("<B", int(kind) & 0xFF)
 
 
 def encode_get_fault():
@@ -647,6 +654,11 @@ def decode_set_mode(payload):
     return _unpack(CMD.SET_MODE, payload, SetMode)
 
 
+def decode_calibrate_force(payload):
+    # type: (bytes) -> CalibrateForce
+    return _unpack(CMD.CALIBRATE_FORCE, payload, CalibrateForce)
+
+
 def decode_get_fault(payload):
     # type: (bytes) -> None
     _check_empty(CMD.GET_FAULT, payload)
@@ -722,6 +734,7 @@ _DECODERS = {
     CMD.EMERGENCY_STOP: decode_emergency_stop,
     CMD.CLEAR_FAULT: decode_clear_fault,
     CMD.SET_MODE: decode_set_mode,
+    CMD.CALIBRATE_FORCE: decode_calibrate_force,
     CMD.GET_FAULT: decode_get_fault,
     CMD.SET_FORCE_TARGET: decode_set_force_target,
     CMD.ACK: decode_ack,
@@ -962,6 +975,7 @@ def _roundtrip_cases():
         (CMD.EMERGENCY_STOP, encode_emergency_stop()),
         (CMD.CLEAR_FAULT, encode_clear_fault()),
         (CMD.SET_MODE, encode_set_mode(MODE_AUTO)),
+        (CMD.CALIBRATE_FORCE, encode_calibrate_force(1)),
         (CMD.GET_FAULT, encode_get_fault()),
         (CMD.SET_FORCE_TARGET, encode_set_force_target(1500)),
         (CMD.ACK, encode_ack(CMD.SET_TARGET)),
@@ -1067,6 +1081,7 @@ def _check_payload_sizes():
         CMD.EMERGENCY_STOP: 0,
         CMD.CLEAR_FAULT: 0,
         CMD.SET_MODE: 1,
+        CMD.CALIBRATE_FORCE: 1,
         CMD.GET_FAULT: 0,
         CMD.SET_FORCE_TARGET: 2,
         CMD.ACK: 1,
@@ -1079,7 +1094,28 @@ def _check_payload_sizes():
         CMD.NACK: 3,
     }  # type: Dict[int, int]
     problems = []  # type: List[str]
+
+    # Completeness first: this table is the independent restatement of the wire
+    # format, so a command that is missing from it is not checked at all.  That
+    # is how CALIBRATE_FORCE came to be absent from both this table and
+    # ``_PAYLOAD_SPEC`` while ``CMD_NAME`` listed it -- the command existed, the
+    # self test passed, and any host that tried to send it got a KeyError.  The
+    # set comparison turns "someone forgot" into a failing check.
+    missing = sorted(set(CMD_NAME) - set(expected))
+    extra = sorted(set(expected) - set(CMD_NAME))
+    for cmd in missing:
+        problems.append("%s is in CMD_NAME but not in the payload-size table"
+                        % cmd_name(cmd))
+    for cmd in extra:
+        problems.append("payload-size table lists 0x%02X, which is not a known command"
+                        % cmd)
+    unknown_spec = sorted(set(CMD_NAME) - set(_PAYLOAD_SPEC))
+    for cmd in unknown_spec:
+        problems.append("%s has no entry in _PAYLOAD_SPEC" % cmd_name(cmd))
+
     for cmd in sorted(expected):
+        if cmd not in _PAYLOAD_SPEC:
+            continue
         got = payload_size(cmd)
         if got != expected[cmd]:
             problems.append("%s: %d != %d" % (cmd_name(cmd), got, expected[cmd]))
@@ -1088,11 +1124,27 @@ def _check_payload_sizes():
     return True, "all %d payload sizes match the specification" % len(expected)
 
 
+def _check_roundtrip_coverage():
+    # type: () -> Tuple[bool, str]
+    """Every known command must appear in the round-trip case list.
+
+    ``_check_roundtrip`` only tests the commands it is handed, so the list is the
+    coverage.  A command omitted from it is reported as "22 commands round
+    tripped" and looks like a complete result.
+    """
+    covered = set(cmd for cmd, _ in _roundtrip_cases())
+    missing = sorted(set(CMD_NAME) - covered)
+    if missing:
+        return False, "not round-tripped: %s" % ", ".join(cmd_name(c) for c in missing)
+    return True, "the round-trip list covers all %d commands" % len(covered)
+
+
 def selftest(verbose=True):
     # type: (bool) -> bool
     """Run the protocol self test, printing PASS/FAIL lines.  Returns success."""
     checks = [
         ("CRC-16/MODBUS vector", _check_crc_vector),
+        ("command coverage", _check_roundtrip_coverage),
         ("frame round-trip", _check_roundtrip),
         ("resync / CRC reject / streaming", _check_resync_and_crc),
         ("payload sizes", _check_payload_sizes),
