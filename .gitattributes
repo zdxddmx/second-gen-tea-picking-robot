@@ -1,0 +1,43 @@
+# Line-ending policy.
+#
+# The firmware is developed on Windows and cross-compiled for an Arm target, and
+# it is read by people on both.  Git's default `core.autocrlf` behaviour rewrites
+# line endings on checkout, which produces the "LF will be replaced by CRLF"
+# warning on every add and, worse, can make a diff of a single line look like a
+# diff of the whole file.
+#
+# The rule below is: store everything with LF in the repository, and let the
+# shell scripts and the Python tools be checked out with LF everywhere, because
+# a `#!` interpreter line followed by CRLF does not execute on Linux or macOS.
+
+* text=auto eol=lf
+
+# Windows-native script formats keep CRLF where their tooling expects it.
+*.ps1   text eol=crlf
+*.psm1  text eol=crlf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Shell and Python entry points must stay LF, or they will not run on POSIX.
+*.sh    text eol=lf
+*.py    text eol=lf
+Makefile text eol=lf
+
+# Binary artefacts are never line-ending converted, and binary diffs on generated
+# data are noise rather than information.
+*.png   binary
+*.jpg   binary
+*.pdf   binary
+*.zip   binary
+*.elf   binary
+*.bin   binary
+*.hex   binary
+*.o     binary
+*.a     binary
+
+# ARM object files and firmware images are generated, so language statistics
+# should not count them.
+*.map   linguist-generated=true
+*.elf   linguist-generated=true
+*.bin   linguist-generated=true
+*.hex   linguist-generated=true

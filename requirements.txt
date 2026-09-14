@@ -1,0 +1,20 @@
+﻿# Python dependencies for the simulation, the host tools and the test suite.
+#
+#   pip install -r requirements.txt
+#
+# Deliberately small: no deep-learning framework, no web framework, no build
+# tool.  Everything here is either required by the simulator or by a host tool.
+#
+# Note on pytest: the test suite is *pytest-compatible* (plain test_* functions
+# with plain asserts and no pytest-specific imports) but does NOT require it.
+# `python tests/run_tests.py` runs the same tests with the standard library
+# only, which matters because the environment this project was developed in had
+# no network access and could not install anything.
+
+numpy>=1.20          # plant model, telemetry arrays, figures
+matplotlib>=3.4      # time-series and analysis figures
+pyserial>=3.5        # serial transport for the host link and the vision mock
+
+# Optional, for running the test suite through pytest instead of the bundled
+# runner:
+# pytest>=6.0
