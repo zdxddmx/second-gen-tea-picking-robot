@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file    can_driver.c
  * @brief   Implementation of the CAN transport driver.
  * @copyright MIT License, see LICENSE.
@@ -34,7 +34,19 @@ tp_status_t tp_can_init(tp_can_status_t *st, uint32_t bitrate_bps)
     (void)memset(st, 0, sizeof(*st));
     st->bitrate_bps = bitrate_bps;
     st->initialised = 1;
-    LOG_INFO(TP_MOD_COMM, "CAN up at %lu bit/s, sample point 87.5%%",
+    /* The message deliberately reports *that* a sample point was solved rather
+     * than quoting one.  The first version printed a hard-coded "87.5 %", which
+     * is the textbook CANopen recommendation and also, on this hardware, wrong:
+     * with a 42 MHz APB1 clock a 500 kbit/s bit time is 84 clock periods, and
+     * 87.5 % of a bit needs a time-quantum count divisible by 8.  84 is not, so
+     * the achievable sample point is 85.7 %.  The register-level backend logs
+     * the figure it actually programmed, with the arithmetic; this layer must not
+     * contradict it.  A log line that lies about the bit timing is worse than no
+     * log line, because it is the first thing anyone checks when a bus will not
+     * come up. */
+    LOG_INFO(TP_MOD_COMM,
+             "CAN up at %lu bit/s (sample point solved against APB1, see the "
+             "port's log line for the programmed value)",
              (unsigned long)bitrate_bps);
     return TP_OK;
 }
