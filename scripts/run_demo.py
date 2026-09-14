@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """One-command demonstration of the whole tea-picking robot.
 
@@ -314,8 +314,12 @@ def draw_plots(sim_result):
     summary = getattr(plotting, "plot_scenario_summary", None)
     if summary is not None:
         out = os.path.join(RESULT_DIR, "demo_scenario_summary.png")
+        metrics = getattr(sim_result, "metrics", None) or {}
+        f_target = metrics.get("force_target_n")
         try:
-            summary(sim_result, getattr(sim_result, "key", "A"), path=out)
+            summary(recorder, getattr(sim_result, "key", "A"),
+                    faults=getattr(sim_result, "faults", None),
+                    metrics=metrics, f_target_n=f_target, path=out)
             produced.append(out)
         except Exception as exc:  # noqa: BLE001
             print("  !! plot_scenario_summary failed: %s" % exc)
