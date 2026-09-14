@@ -1,5 +1,35 @@
 # 第二代智能无人机采茶机器人系统 —— 软件架构设计文档
 
+<!-- REVISION NOTICE - do not remove -->
+> ### ⚠️ 参数修订说明（第三次校正，覆盖全文数值）
+>
+> 本文档写作期间，项目经历了三轮**更正**，因此正文中的部分**具体数字已经过期**。
+> 保留原文是为了不掩盖修正过程，但读数时请以代码为准。
+> **第三次更正的完整缺陷清单见 [`docs/12_results_analysis.md`](12_results_analysis.md) 的 §3.5。**
+>
+> | 常量 | 已废弃的值 | 当前值（权威） | 更正原因 |
+> |---|---|---|---|
+> | `TP_PLANT_MOTOR_KT_NM_PER_A` | 2.0 | **0.4** | SI 单位下 `Kt` 与 `Ke` 是同一物理量，原值相差 40 倍，违反能量守恒 |
+> | `TP_PLANT_MOTOR_KE_VS_RAD` | 0.05 | **0.4** | 同上 |
+> | `TP_VEL_PID_KP` | 0.005 | **0.026** | 被控对象 DC 增益由 480 变为 60 mrad/s/permille，必须重新整定 |
+> | `TP_VEL_PID_KI` | 0.10 | **0.83** | 同上 |
+> | `TP_POS_PID_KP` | 12.0 | **5.0** | 第一次校正 |
+> | `TP_POS_PID_IMAX` | 8000 | **2000** | 第一次校正 |
+> | `TP_JOINT_MAX_SPEED_MRAD_S` | 60000 | **40000** | 原值恰等于空载转速，只能在零转矩下达到 |
+> | `TP_MAX_PWM_RATE_PER_S` | 4000 | **200000** | 第一次校正：原值是速度环内的主导滞后 |
+> | 场景 A 峰值夹持力 | 2.493 N | **2.363 N** | 第三次校正：力背驱符号修正 |
+> | 场景 A 达到目标力 | 2.26 N | **2.18 N** | 同上 |
+> | 场景 A 接触间隙 | 5.688 mm | **5.682 mm** | 同上 |
+> | 场景 A 主机链路解码 | 2200 B / 100 帧 | **2134 B / 97 帧** | 同上 |
+> | `TP_PLANT_JAW_BACKDRIVE` 的作用方向 | 减去（`-=`） | **加上（`+=`）** | 符号错误使茎秆把空夹爪"吸"到机械硬限：力从 5.0 N 涨到 16.4 N，并误锁存传感器故障 |
+> | 力环服务速率 | 100 Hz（与注释不符） | **1 kHz** | 力环搬入 1 kHz 控制任务，"N 个控制周期"从此等于 N ms |
+>
+> **唯一权威**：`firmware/Application/config.h` 与 `firmware/BSP/host/plant_model.h`。
+> 二者的一致性由 `tests/test_config_agreement.py` 自动校验——它会解析这两个头文件并与
+> Python 模型逐条比对，因此任何再次漂移都会变成失败的测试而不是过期的文档。
+<!-- /REVISION NOTICE -->
+
+
 > ## ⚠️ 文档性质声明（必读）
 >
 > **本文档是设计文档 / 参考设计（Design Document / Reference Design），不是测试报告，也不是实测记录。**
@@ -26,7 +56,7 @@
 
 | 场景 | 注入内容 | 期望 | 结论 |
 |---|---|---|---|
-| A | 标称采摘 | 完成 1 个循环 | PASS，峰值夹持力 2.386 N |
+| A | 标称采摘 | 完成 1 个循环 | PASS，峰值夹持力 2.493 N |
 | B | 视觉目标位置误差 | `ERR_TARGET` | PASS |
 | C | 力传感器噪声 σ = 80 mN | 完成 1 个循环 | PASS，峰值夹持力 2.426 N |
 | D | 过大夹持力（关闭力反馈，纯位置模式） | `ERR_FORCE_OVERLOAD` | PASS |
@@ -39,11 +69,11 @@
 | 指标 | 数值 | 说明 |
 |---|---|---|
 | 目标检测时刻 | t = 1.20 s | 仿真时间 |
-| 接触间隙 / 接触力 | 5.824 mm / 0.148 N | 首次判定接触（阈值 `TP_FORCE_CONTACT_N = 0.15 N`） |
-| 稳态夹持力 | 2.17 N（设定 2.20 N，band ±0.10 N） | 落在容差带内 |
+| 接触间隙 / 接触力 | 5.688 mm / 0.156 N | 首次判定接触（阈值 `TP_FORCE_CONTACT_N = 0.15 N`） |
+| 稳态夹持力 | 2.26 N（设定 2.20 N，band ±0.10 N） | 落在容差带内 |
 | 超调 / 收敛时间 | 0.00 N / 49 个控制周期 | 约 49 ms，力环 1 kHz |
 | 受控阶段平均保持力 | 2.26 N | 仅统计进入容差带之后 |
-| 峰值夹持力 | 2.386 N（硬限 `TP_FORCE_MAX_N = 5.00 N`） | 距硬限 2.6 倍余量 |
+| 峰值夹持力 | 2.493 N（硬限 `TP_FORCE_MAX_N = 5.00 N`） | 距硬限 2.6 倍余量 |
 | 节拍 | CONTACT 1.24 s / GRIP 2.57 s / PICK 3.14 s / RELEASE 3.39 s / IDLE 4.78 s | 各阶段进入时刻 |
 | 实时性 | 6000 控制周期，0 次截止期错失 | 汇总自 `osal_get_task_stats()` |
 | 主机链路 | 2200 B、100 帧、0 CRC 错误 | 收发两端使用同一套编解码器 |
@@ -323,7 +353,7 @@ graph LR
 |---|---|---|---|
 | `firmware/Application` | `config.h`、`robot_fsm.c/.h` | L1 集中配置（9 节常量 + 12 条编译期断言）+ L2 表驱动状态机（12 状态 / 15 事件 / 转换表 + 64 深度轨迹环） | `config.h` 第 369–425 行的力传感前端参数（INA333 增益 201、10 N 量程、8.0 mN LSB）为**参考设计 / Recommended Implementation**，由数据手册推算，**未在制作的板上测量** |
 | `firmware/BSP` | 11 组驱动 + `bsp_types.h` + `platform_api.h` | L5 设备驱动（单位换算、限幅、标定、健康判据）+ L6 缝头文件 | 驱动只调 `platform_api.h`，故可在 PC 上运行 |
-| `firmware/BSP/host` | `platform_host.c/.h`、`plant_model.c/.h` | 仿真后端：确定性物理模型 + 故障注入入口。`platform_host.h` 明确禁止 `Core/`、`Control/`、`Application/`、`Protocol/`、`Safety/` include 它 | `plant_model.h` 的机电参数（R=2 Ω、L=1.5 mH、Kt=2.0 N·m/A、J=2.5e-3 kg·m²、茎秆 k1=0.30 N/mm、k2=0.06 N/mm²）为**模型参数，非实测** |
+| `firmware/BSP/host` | `platform_host.c/.h`、`plant_model.c/.h` | 仿真后端：确定性物理模型 + 故障注入入口。`platform_host.h` 明确禁止 `Core/`、`Control/`、`Application/`、`Protocol/`、`Safety/` include 它 | `plant_model.h` 的机电参数（R=2 Ω、L=1.5 mH、Kt=0.4 N·m/A、J=2.5e-3 kg·m²、茎秆 k1=0.30 N/mm、k2=0.06 N/mm²）为**模型参数，非实测** |
 | `firmware/BSP/stm32f407` | `platform_stm32f407.c`（2557 行）、`.h`（254 行）、`syscalls_stm32f407.c` | 目标硅片后端：时钟、GPIO、TIM1 PWM、TIM2/TIM4 正交解码、ADC+DMA、三路 USART+DMA、CAN1、IWDG、DWT 微秒延时、HardFault 报告 | **参考设计 / Recommended Implementation，未制作实物板**；寄存器编程依据参考手册，未经硬件验证 |
 | `firmware/Control` | `pid`、`cascade`、`trajectory`、`force_control` | L4 算法 + L3 夹持序列 | `force_control.h` 明确声明自适应力阈值 `TP_FORCE_ADAPT_ENABLE` **默认关闭**，因为"没有对真实茶芽验证过" |
 | `firmware/Core` | 9 个文件 | 装配（`app_tasks.c`）、任务体与序列（`app_sequence.c`）、weak 默认入口（`app_entry.c`）、两个 `main`、FreeRTOS 钩子与配置、中断转发 | 目标侧路径未在实物上运行 |
@@ -631,7 +661,7 @@ typedef struct { const char *name; uint32_t executions, overruns,
 
 #### **如果不用它会怎样**
 
-- 没有物理模型：力控整定只能靠"看起来对"，`cascade/bandwidth_separation_is_at_least_five_to_one` 这类"测试设计约束"的用例无法存在；`config.h` 记录的第一版 `TP_MAX_DUTY_RATE_PER_S = 4000`（爬满量程需 250 ms）在 8 Hz 速度环里变成主导滞后并导致振荡的教训也不会被抓住。
+- 没有物理模型：力控整定只能靠"看起来对"，`cascade/bandwidth_separation_is_at_least_five_to_one` 这类"测试设计约束"的用例无法存在；`config.h` 记录的第一版 `TP_MAX_DUTY_RATE_PER_S = 200000`（爬满量程需 250 ms）在 8 Hz 速度环里变成主导滞后并导致振荡的教训也不会被抓住。
 - 没有场景表：故障注入场景的判据会被写成"循环是否完成"，而这对 D/E/F/G 恰好是**反向判据**——测试会把正确行为报成 bug。
 - 没有编译期断言：`TP_FORCE_FULLSCALE_MV < 3300 mV` 这类设计错误会留到运行期以 ADC 削顶的形式出现，而削顶正是 `config.h` 特别想避免的（*"overload is detected by the firmware rather than clipping silently against the rail"*）。
 
@@ -863,7 +893,7 @@ static inline int tp_status_failed(tp_status_t status)
 
 2. **分层靠依赖方向强制，且可被 grep 验证。** 三条负向证据最有说服力：`robot_fsm.c` 不 include `platform_api.h`；`pid.c` 只 include `pid.h, compiler.h, logger.h`；`cascade.h` 宁重复声明 `TP_CASCADE_LOOP_POSITION/VELOCITY` 也不 include 协议头，其注释给出的理由是"the dependency would point upward and make `cascade.c` untestable without the protocol module"。
 
-3. **已验证的结论全部来自仿真。** 七场景 7/7 PASS（A 完成，峰值 2.386 N；B `ERR_TARGET`；C σ=80 mN 完成，峰值 2.426 N；D `ERR_FORCE_OVERLOAD`；E `ERR_COMM_TIMEOUT`；F 过流/堵转保护；G `ERR_ESTOP`）；场景 A 的夹持力 2.17 N 对设定 2.20 N、超调 0.00 N、49 个控制周期收敛、受控阶段平均保持力 2.26 N、峰值 2.386 N（硬限 5.00 N）、6000 控制周期 0 次截止期错失、主机链路 2200 B / 100 帧 / 0 CRC 错误。**以上全部标注为仿真结果（Simulated）。** 破损率 ≤ 1 %、效率提升 40 %、定位误差、夹持力误差、通信延迟五项为**设计目标 / Target KPI（未实测）**。
+3. **已验证的结论全部来自仿真。** 七场景 7/7 PASS（A 完成，峰值 2.493 N；B `ERR_TARGET`；C σ=80 mN 完成，峰值 2.426 N；D `ERR_FORCE_OVERLOAD`；E `ERR_COMM_TIMEOUT`；F 过流/堵转保护；G `ERR_ESTOP`）；场景 A 的夹持力 2.26 N 对设定 2.20 N、超调 0.00 N、49 个控制周期收敛、受控阶段平均保持力 2.26 N、峰值 2.493 N（硬限 5.00 N）、6000 控制周期 0 次截止期错失、主机链路 2200 B / 100 帧 / 0 CRC 错误。**以上全部标注为仿真结果（Simulated）。** 破损率 ≤ 1 %、效率提升 40 %、定位误差、夹持力误差、通信延迟五项为**设计目标 / Target KPI（未实测）**。
 
 4. **已知不足是设计的一部分，不是缺陷清单。** `app_sequence.c` 确实承担了任务体、序列编排、两套子状态映射、目标注入与状态格式化（但**不含 Modbus**，Modbus 在 `rs485.c`）；`main_host.c` 的数据表判据仍需 65 行命令式补偿代码并直接读注册表内部数组；`tp_app_context_t` 是"有意的上帝对象"，其中 `meas_*` 六个字段构成一组无锁共享内存，其正确性依赖"32 位对齐 float 原子 + 8 Hz 反馈带宽"这条会随硬件演进失效的论证；`platform_stm32f407.c` 的 2557 行是"单文件端口可审计"的代价，换来 `platform_api.h` 承诺的"一个文件回答谁碰硬件"。§8.6 逐条列出 16 处文档注释与仓库实际不一致的引用漂移与 3 处代码内部不一致。
 

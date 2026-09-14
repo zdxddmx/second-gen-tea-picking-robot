@@ -27,7 +27,7 @@ STM32F407 · FreeRTOS · Cascaded PID · Force-Feedback Compliant Gripping
 | **Where is the code?** | `firmware/` is the firmware (89 C files / 25,939 lines); `simulator/` is an independent Python physics model; `tests/` and `firmware/Tests/` hold the test suites. |
 | **Where is the control algorithm?** | `firmware/Control/pid.c` (PID), `cascade.c` (dual loop), `force_control.c` (compliant gripping), `trajectory.c` (profiles). |
 | **How do I run it?** | `python scripts/run_demo.py` — one command builds, simulates, plots and cross-checks. |
-| **What is the result?** | Simulation: full pick cycle completes with a grip force of **2.17 N** against a 2.20 N setpoint, **0.00 N overshoot**, **2.26 N** mean hold force and a **2.386 N** peak (5.0 N hard limit), with **0 missed control deadlines**. All seven scenarios trigger their protection as designed. |
+| **What is the result?** | Simulation: full pick cycle completes with a grip force of **2.18 N** against a 2.20 N setpoint, **0.00 N overshoot**, **2.27 N** mean hold force and a **2.363 N** peak (5.0 N hard limit), with **0 missed control deadlines**. All seven scenarios trigger their protection as designed. |
 
 > **⚠️ Data-honesty statement — please read this first**
 >
@@ -78,7 +78,7 @@ STM32F407 · FreeRTOS · Cascaded PID · Force-Feedback Compliant Gripping
 | Gripping | Fixed-position loop | **Force-feedback loop** + cascaded position/velocity approach |
 | Damage control | Mechanical stops and empirical calibration | Three-level force protection + an adaptive-threshold framework |
 | Software | Single-file super-loop | 7-layer architecture + 7 FreeRTOS tasks |
-| Testability | Requires hardware | **The same firmware sources run on a PC**: 125 C unit tests + 22 Python tests |
+| Testability | Requires hardware | **The same firmware sources run on a PC**: 126 C unit tests + 30 Python tests |
 | Communication | Ad-hoc serial | Framed protocol (CRC16) + Modbus RTU |
 
 ---
@@ -281,9 +281,9 @@ Each filtering stage has a distinct job: the **median** removes isolated EMI spi
 flowchart LR
     REF["theta_ref<br/>position reference"] --> SUM1(("+"))
     TRAJ["Trajectory generator<br/>trapezoidal / S-curve"] -.->|"theta_ref, v_ff"| SUM1
-    SUM1 -->|"e_theta"| PPID["Position PID<br/>Kp=5.0 Ki=0.5<br/>clamp +-60000 mrad/s<br/>I clamp +-2000"]
+    SUM1 -->|"e_theta"| PPID["Position PID<br/>Kp=5.0 Ki=0.5<br/>clamp +-40000 mrad/s<br/>I clamp +-2000"]
     PPID -->|"v_ref"| SUM2(("+"))
-    SUM2 -->|"e_v"| VPID["Velocity PID<br/>Kp=0.005 Ki=0.10<br/>clamp +-1000 permille<br/>I clamp +-250"]
+    SUM2 -->|"e_v"| VPID["Velocity PID<br/>Kp=0.026 Ki=0.83<br/>clamp +-1000 permille<br/>I clamp +-250"]
     VPID -->|"duty"| SLEW["Duty slew limiter<br/>200000 permille/s"]
     SLEW --> MOTOR["Motor + gearbox"]
     MOTOR --> PLANT["Joint J=2.5e-3 kg.m^2<br/>b=3e-5 N.m.s/rad"]
@@ -305,7 +305,7 @@ flowchart LR
 
 | Loop | Bandwidth | Derivation |
 |---|---|---|
-| Velocity (inner) | ≈ **8 Hz** (50 rad/s) | Plant: DC gain 480 mrad/s per permille, mechanical time constant `J/(b + Kt·Ke/R) = 0.05 s`. PI placement `Kp = τ/(K·Tc)` with `Tc = 20 ms` gives `Kp = 0.0052`, `Ki = Kp/τ = 0.104` |
+| Velocity (inner) | ≈ **8 Hz** (50 rad/s) | Plant: DC gain **60 mrad/s per permille**, mechanical time constant **0.031 s** (the electrical damping `Kt·Ke/R = 0.08 N·m·s/rad` exceeds the viscous term by three orders of magnitude, so it alone sets the time constant). PI placement `Kp = τ/(K·Tc)` with `Tc = 20 ms` gives `Kp = 0.026`, `Ki = Kp/τ = 0.83` |
 | Position (outer) | ≈ **0.8 Hz** | The closed velocity loop is a first-order lag of about 20 ms, so `v = Kp·e` closes the position loop with time constant `1/Kp`; `Kp = 5.0` gives 200 ms |
 | Separation | **about 10x** | Below 5x a cascade is *worse* than a single loop (extra lag for no benefit); above 20x the position loop is needlessly slow |
 
@@ -687,28 +687,28 @@ Gripper and tea stem:
 |---|---|---|
 | Target detected | 1.20 s | id=1, x=0 mm, y=15 mm, z=185 mm, confidence 95 % |
 | Approach complete | 1.24 s | 50 mrad move, 32 ms trapezoidal profile |
-| **Contact detected** | **2.57 s** | **gap 5.824 mm, F = 0.148 N** |
-| **Target force reached** | **3.14 s** | **2.17 N** against 2.20 N ± 0.10 N, **0.00 N overshoot**, 49 control periods to settle |
-| Detach | 3.39 s | mean force while gripping **2.26 N** |
-| Release | 4.68 s | fully open |
-| Home | 4.78 s | `cycle_count = 1` |
+| **Contact detected** | **2.62 s** | **gap 5.682 mm, F = 0.156 N** |
+| **Target force reached** | **3.02 s** | **2.18 N** against 2.20 N ± 0.10 N, **0.00 N overshoot**, 319 control periods (319 ms) to settle |
+| Detach | 3.27 s | mean force while gripping **2.27 N** |
+| Release | 3.27 s | fully open |
+| Home | 4.59 s | `cycle_count = 1` |
 
 | Metric | Result |
 |---|---|
-| Peak grip force | **2.386 N** (hard limit 5.00 N) |
+| Peak grip force | **2.363 N** (hard limit 5.00 N) |
 | Grip force overshoot | **0.00 N** |
 | Task iterations | 6000 control (1 kHz) / 3000 sensor / 600 comm / 600 robot / 600 safety |
 | **Missed deadlines** | **0** |
-| Host-link decode | 2200 B, 100 frames, **0 CRC errors** |
+| Host-link decode | 2134 B, 97 frames, **0 CRC errors** |
 
 **All seven scenarios** (`scripts/run_scenarios.ps1`, 7/7 PASS)
 
 | Scenario | Result | Peak grip force | Final state |
 |---|---|---|---|
-| A nominal pick | cycle completed | 2.386 N | idle |
-| B target position error | aborted | 0.167 N | error (`ERR_TARGET`) |
-| C force sensor noise | cycle completed | 2.426 N | idle |
-| D excessive grip force | protection tripped | — | error (`ERR_FORCE_OVERLOAD`) |
+| A nominal pick | cycle completed | 2.363 N | idle |
+| B target position error | aborted | 0.000 N | error (`ERR_TARGET`) |
+| C force sensor noise | cycle completed | 2.421 N | idle |
+| D excessive grip force | protection tripped | 5.027 N | error (`ERR_FORCE_OVERLOAD`) |
 | E communication timeout | cycle stopped | — | idle |
 | F motor stall | protection tripped | — | error (`ERR_MOTOR_STALL`) |
 | G emergency stop | immediate stop | — | emergency_stop |
@@ -733,6 +733,25 @@ Gripper and tea stem:
 | 9 | An ADC pinned at a rail (wire broken to ground) reads −16.4 N, which **sits inside the ±20 N plausibility window** | The break presented itself as a legitimate large negative force and the force controller would have believed it | Saturation is itself a fault |
 | 10 | `tp_fault_clear_all()` counted **never-raised** codes as cleared | Reported "9 faults cleared" on a healthy robot | Count only faults that were latched before the call |
 | 11 | **Cross-implementation wire incompatibilities**: `SET_TARGET` 9 vs 10 bytes, `NACK` 2 vs 3, three command codes different, and `loop_id` mapping swapped FORCE with VELOCITY | A host saying "tune the grip force" re-tuned the velocity loop; `target_id` was read one byte early | Pinned by a conformance test on both sides (`tests/test_protocol_agreement.py`) |
+| 12 | **`Kt = 2.0 N·m/A` against `Ke = 0.05 V·s/rad`** — a factor of 40, in SI units the *same physical quantity*, since `Kt·I·ω = Ke·ω·I` must hold | The model describes a machine producing 40x more torque per amp than its own back-EMF permits, i.e. one that does not conserve energy | `Kt = Ke = 0.4`, fixed by the top-speed requirement (`Ke <= 0.4` for 60 rad/s at 24 V) together with having enough holding torque at the 3 A continuous limit; a `TP_STATIC_ASSERT` now makes the identity impossible to violate, and the velocity loop was retuned accordingly |
+| 13 | **The velocity-loop gains disagreed with the Python model** (firmware retuned to `Kp = 5.0 / 0.026`, Python still at `12.0 / 0.015`) | Two "independent implementations" were running *different controllers*, which reduces cross-validation to self-confirmation | Added `tests/test_config_agreement.py`, which **parses `config.h`** and compares it against the Python config, turning drift into a failing test |
+| 14 | **The force loop actually ran at 100 Hz** while its documentation, its gains and its tuning all assumed 1 kHz | The worst-case reaction at contact is 10 ms, in which the jaw travels 0.4 mm at 40 mm/s and the force rises by 0.12 N — **a tenth of the settling band spent before the controller has had a single chance to respond** | Moved into the 1 kHz control task; the state machine still only *observes* the controller, so the layering is unchanged |
+| 15 | **The top-speed limit was exactly equal to the no-load speed** (60 000 mrad/s at 24 V with `Ke = 0.4`) | That limit can only be reached at *zero torque*, so the controller cannot regulate to it — it is not a limit, it is a value the axis passes through on its way to stalling | Lowered to 40 000 mrad/s (67 % of no-load), leaving voltage headroom for accelerating and holding torque; a test enforces the inequality |
+| 16 | **The force plausibility window `(-20, +50) N` covered no reachable value** (the front end saturates at ±16.4 N) | The check was **dead code that looked like a protection** | Derived from `TP_FORCE_USABLE_RANGE_N` (±19.7 N, 20 % margin), which now catches the bridge unbalance the saturation flag cannot |
+| 17 | **`TP_FORCE_ADAPT_ENABLE = 1` while the same header said "disabled by default"** | The robot was re-tuning its own grip force with an unvalidated model, and the code contradicted its own documentation — both statements reasonable in isolation, which is why it survived review | Set to 0: enabling it without real-bud calibration would be overclaiming |
+| 18 | **`rms_position_error` held a mean square while being named and documented as RMS** | Every report quoting it was out by **a square root** | Renamed to `mean_sq_position_error`; added `tp_cascade_rms_position_error()` to take the root |
+| 19 | **`TP_PEAK_CURRENT_MA` was documented but never enforced**; `TP_GRIPPER_BACKOFF_MM`, `TP_FORCE_RELEASE_N` and `TP_MOTOR_OC_RECOVER_MS` had no call sites | Anyone sizing a driver against a 5 A peak was working from a number the firmware does not implement | Implemented peak current limiting (2 ms window, separate from the 20 ms continuous debounce); deleted the three dead macros |
+| 20 | **`TP_MODE_CALIBRATE` documented "motion inhibited" but the code only recorded the mode** | The operator's user interface had already told them the robot would not move, and it would | Added the interlock in the layer that *writes the drive* — a mode flag only the setter respects is a suggestion, not an interlock |
+| 21 | **`safety_monitor.c` claimed the E-stop was not debounced**, while it passes through the 3-sample / 6 ms debouncer in `limit_switch.c` | The documentation contradicted the implementation, which is not an acceptable statement about a safety function | The comment now states the fact, explains why 6 ms is acceptable on *this research prototype* (the E-stop is also hard-wired into the gate-driver enable path, where no firmware latency applies), and notes that a product must remove it |
+| 22 | **`can_driver.c` logged a hard-coded "sample point 87.5 %"** | A 500 kbit/s bit time at 42 MHz APB1 is 84 clock periods, and 87.5 % needs a time-quantum count divisible by 8 — 84 is not, so the achievable figure is 85.7 %. **When a bus will not come up, that log line is the first thing anyone reads, and it was lying** | The line no longer quotes a sample point; the register-level backend logs the value it actually programmed, with the arithmetic |
+| 23 | **The jaw's force back-drive term had the wrong sign** (`v_jaw -= force/20`, in a model where positive `v_jaw` *opens* the jaw) | A larger force closed the jaw faster, which raised the force again — **positive-feedback divergence**. In scenario D the protection fired correctly at 5.013 N, the jaw was then commanded to zero duty, and the force went on climbing to **16.4 N** with the gap falling to the 1.0 mm hard stop, which railed the force ADC and latched a **spurious `ERR_SENSOR`**. Every test, all seven scenarios and all six figures passed | Sign corrected to `+=`; added the unit test `a_free_jaw_is_pushed_open_by_the_stem`, which asserts the **direction** of the reaction rather than a value, so it is immune to parameter changes |
+| 24 | **After an over-force trip the jaws were only *stopped*, never *opened*** | The 30 mm/s open command issued by `grip_trip()` was immediately overwritten by `tp_gripper_stop()` in the 1 kHz control task. Scenario D did release the bud — but only because the back-drive of defect 23 pushed the jaw open, **not because the controller did**. On a softer stem the jaw would have held the trip force on the bud, which is precisely the condition the protection exists to end | While a fault blocks motion the joint still holds position, but the **jaws are actively opened**. "Stop" is not a universal safe action: a revolute joint and a gripper have opposite safe directions |
+| 25 | **A test compared force increments over windows of different widths** (1010 / 1050 / 1082 steps, i.e. 40 and 32 steps) | The assertion meant to measure the quadratic term of the force-displacement curve was actually measuring the difference in window length, and passed only while the curvature happened to outweigh it. Fixing defect 23 flipped the balance (0.868 < 0.884) — **the test failed, the physics did not** | Equal-width windows (1010 / 1042 / 1074). The lesson: a numeric assertion's units must match the quantity being asserted |
+| 26 | **The trace recorded feedback but not commands** | The CSV had position, velocity, force, gap and joint duty, but nothing about the **gripper command**. So "the jaws are closing" could not distinguish two opposite faults — the controller commanded it, or the actuator ignored the controller — and locating defect 23 took an extra round of investigation | Four columns added (`grip_cmd_mm_s`, `grip_applied_mm_s`, `grip_duty`, `grip_mode`). **Command and feedback have to be recorded together** |
+| 27 | **`CALIBRATE_FORCE` (0x42) had no payload specification on the Python side** | The firmware defines 23 commands and the Python `CMD` enum lists 23, but `_PAYLOAD_SPEC` was missing this one, and `payload_format()` raises `KeyError` for an unknown command — so **the host could not construct it at all**. The protocol self test had been printing "22 commands round-tripped" and PASS, because it only iterated the list it was handed | Spec and codec added; `_check_roundtrip_coverage()` now asserts that the command-name set, the round-trip list, the payload spec and the length table are **equal as sets**. It prints 23, and dropping any command fails the self test. **Coverage checks must compare sets, not iterate lists** |
+| 28 | **An unsampled 24 V rail was printed as `0.0 V`** | The status line is emitted after the first control period but before the first 500 Hz sample, so `I=0mA Vbus=0.0V` was indistinguishable from a dead supply rail — the one line an operator most needs to read correctly | Print `-` while `sensor_cycles == 0`. **"No data yet" and "the data is zero" must be distinguishable** |
+| 29 | **The scenario F log quoted the drive capability from the `Kt = 2.0` era** (6.0 N·m, actually 1.2 N·m) | The conclusion (8 N·m is a genuine jam) was *understated* — the real ratio is 6.7x — but the log line is the only artefact that gets pasted into a report | The ratio is now computed at run time from `TP_PLANT_MOTOR_KT_NM_PER_A × TP_MAX_CURRENT_MA`. **Never hard-code a conclusion derived from constants** |
+| 30 | **Em dashes in comments were destroyed by a GBK round-trip** (35 places, 14 files) | An earlier documentation pass used PowerShell's `Get-Content -Raw` / `Set-Content`, which round-trips UTF-8 through the console code page: `E2 80 94` became `E2 80` (= U+9225) plus an invalid byte. Harmless to the build, but it proved **the editing toolchain of the time could not be trusted** | Added `scripts/fix_mojibake.py`, which matches that exact codepoint pair and nothing else; every later edit to a non-ASCII file goes through Python (byte-safe) or the `edit` tool |
 
 ---
 
@@ -740,7 +759,7 @@ Gripper and tea stem:
 
 ```
 second-gen-tea-picking-robot/
-├── firmware/                        firmware (89 C files / 25,939 lines)
+├── firmware/                        firmware (89 C files / 29,496 lines)
 │   ├── Core/                        entry points, task bodies, pick orchestration, STM32 IRQs
 │   ├── Application/                 config.h (every tunable), robot_fsm.c
 │   ├── Control/                     pid.c · cascade.c · force_control.c · trajectory.c
@@ -753,8 +772,8 @@ second-gen-tea-picking-robot/
 │   │   ├── host/                    plant_model.c (physics) · platform_host.c
 │   │   └── stm32f407/               platform_stm32f407.c (real registers)
 │   ├── Drivers/                     startup · linker script · third party (HAL/CMSIS/FreeRTOS)
-│   └── Tests/                       125 C unit tests + a zero-dependency test framework
-├── simulator/                       independent Python simulation (18 modules)
+│   └── Tests/                       126 C unit tests + a zero-dependency test framework
+├── simulator/                       independent Python simulation (20 modules)
 ├── host/                            host tooling: protocol · monitor GUI · link abstraction
 ├── tools/                           vision_mock.py · analyze_log.py
 ├── tests/                           Python test suite + zero-dependency runner

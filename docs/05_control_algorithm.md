@@ -1,5 +1,35 @@
 # 第二代智能无人机采茶机器人系统 —— 控制算法设计与推导
 
+<!-- REVISION NOTICE - do not remove -->
+> ### ⚠️ 参数修订说明（第三次校正，覆盖全文数值）
+>
+> 本文档写作期间，项目经历了三轮**更正**，因此正文中的部分**具体数字已经过期**。
+> 保留原文是为了不掩盖修正过程，但读数时请以代码为准。
+> **第三次更正的完整缺陷清单见 [`docs/12_results_analysis.md`](12_results_analysis.md) 的 §3.5。**
+>
+> | 常量 | 已废弃的值 | 当前值（权威） | 更正原因 |
+> |---|---|---|---|
+> | `TP_PLANT_MOTOR_KT_NM_PER_A` | 2.0 | **0.4** | SI 单位下 `Kt` 与 `Ke` 是同一物理量，原值相差 40 倍，违反能量守恒 |
+> | `TP_PLANT_MOTOR_KE_VS_RAD` | 0.05 | **0.4** | 同上 |
+> | `TP_VEL_PID_KP` | 0.005 | **0.026** | 被控对象 DC 增益由 480 变为 60 mrad/s/permille，必须重新整定 |
+> | `TP_VEL_PID_KI` | 0.10 | **0.83** | 同上 |
+> | `TP_POS_PID_KP` | 12.0 | **5.0** | 第一次校正 |
+> | `TP_POS_PID_IMAX` | 8000 | **2000** | 第一次校正 |
+> | `TP_JOINT_MAX_SPEED_MRAD_S` | 60000 | **40000** | 原值恰等于空载转速，只能在零转矩下达到 |
+> | `TP_MAX_PWM_RATE_PER_S` | 4000 | **200000** | 第一次校正：原值是速度环内的主导滞后 |
+> | 场景 A 峰值夹持力 | 2.493 N | **2.363 N** | 第三次校正：力背驱符号修正 |
+> | 场景 A 达到目标力 | 2.26 N | **2.18 N** | 同上 |
+> | 场景 A 接触间隙 | 5.688 mm | **5.682 mm** | 同上 |
+> | 场景 A 主机链路解码 | 2200 B / 100 帧 | **2134 B / 97 帧** | 同上 |
+> | `TP_PLANT_JAW_BACKDRIVE` 的作用方向 | 减去（`-=`） | **加上（`+=`）** | 符号错误使茎秆把空夹爪"吸"到机械硬限：力从 5.0 N 涨到 16.4 N，并误锁存传感器故障 |
+> | 力环服务速率 | 100 Hz（与注释不符） | **1 kHz** | 力环搬入 1 kHz 控制任务，"N 个控制周期"从此等于 N ms |
+>
+> **唯一权威**：`firmware/Application/config.h` 与 `firmware/BSP/host/plant_model.h`。
+> 二者的一致性由 `tests/test_config_agreement.py` 自动校验——它会解析这两个头文件并与
+> Python 模型逐条比对，因此任何再次漂移都会变成失败的测试而不是过期的文档。
+<!-- /REVISION NOTICE -->
+
+
 > 文档编号：05　　版本：与固件 2.0.0 对应　　单位：mrad / mrad·s⁻¹ / per-mille / N / mm
 >
 > 本文是整个项目**唯一**给出"增益从哪来、带宽怎么算、为什么这样离散"的推导文档。
@@ -11,7 +41,7 @@
 
 被控对象是**单关节机械臂的串级位置/速度环**，以及复用同一套 PID 的夹爪力环。控制周期 1 kHz（`config.h:74` `TP_CONTROL_FREQ_HZ = 1000u`，`TP_CONTROL_DT_S = 1e-3`），夹爪力环同样跑在 1 kHz，机器人状态机与参考轨迹发生器跑在 100 Hz（`TP_ROBOT_FREQ_HZ = 100u`）。
 
-关键数字（全部经代码核对，推导见第 4 节）：速度环对象直流增益 **≈480 mrad/s per per-mille**、机械时间常数 **0.05 s**；PI 增益按极点配置 `Kp = τ/(K·Tc)` 得 **0.0052 / 0.104**，出厂值取一位有效数字 **0.005 / 0.10**；速度环穿越频率 **48.0 rad/s ≈ 7.6 Hz**（设计口径称"约 8 Hz"）；位置环 `Kp = 5.0` 给出 **1/Kp = 200 ms ≈ 0.8 Hz**。两处注释对位置环带宽的记载不一致（`config.h` 写 0.8 Hz / 10 倍，`cascade.h` 写 0.55 Hz / 15 倍），第 4.3 节给出完整复算与诚实结论。
+关键数字（全部经代码核对，推导见第 4 节）：速度环对象直流增益 **≈60 mrad/s per per-mille**、机械时间常数 **0.031 s**；PI 增益按极点配置 `Kp = τ/(K·Tc)` 得 **0.026 / 0.83**，出厂值即该舍入值；速度环穿越频率 **48.0 rad/s ≈ 7.6 Hz**（设计口径称"约 8 Hz"）；位置环 `Kp = 5.0` 给出 **1/Kp = 200 ms ≈ 0.8 Hz**。两处注释对位置环带宽的记载不一致（`config.h` 写 0.8 Hz / 10 倍，`cascade.h` 写 0.55 Hz / 15 倍），第 4.3 节给出完整复算与诚实结论。
 
 验证状态必须前置声明：**本项目没有实物硬件。** 本文所有带「实测」字样的结论都不存在。已验证的是**代码级**行为（编译期断言、单元测试、逐行阅读）与**宿主仿真级**行为（`TP_PLATFORM_HOST` 下运行同一份 `pid.c` / `cascade.c` / `motor.c` + `plant_model.c` 物理模型）。所有峰谷数据均为**仿真结果（Simulated）**；所有带宽、相位裕度、直流增益均为**设计推导（纸面推导，未实测）**。**没有 Bode 图实测、没有频率响应辨识、没有系统辨识实验。**
 
@@ -135,7 +165,7 @@ if (pid->derivative_on_measurement != 0) {
 
 **「为什么这么设计」**
 
-设 `e = r − y`，则 `de/dt = dr/dt − dy/dt`。**只要参考 `r` 是阶跃，`dr/dt` 就是狄拉克冲激**，D 项在那一拍变成无穷大（数值上是 `Δr/dt`，本项目参考轨迹虽不是阶跃，但位置参考由 100 Hz 状态机以 10 ms 步长阶梯更新，每拍参考跳变量可达 `60000 mrad/s × 0.01 s = 600 mrad`，`Δr/dt = 600 mrad / 1 ms = 600000 mrad/s`）。
+设 `e = r − y`，则 `de/dt = dr/dt − dy/dt`。**只要参考 `r` 是阶跃，`dr/dt` 就是狄拉克冲激**，D 项在那一拍变成无穷大（数值上是 `Δr/dt`，本项目参考轨迹虽不是阶跃，但位置参考由 100 Hz 状态机以 10 ms 步长阶梯更新，每拍参考跳变量可达 `40000 mrad/s × 0.01 s = 600 mrad`，`Δr/dt = 600 mrad / 1 ms = 600000 mrad/s`）。
 
 改用测量值微分后，`d_raw = −dy/dt` 只包含**被控对象的真实运动**，与参考怎么跳无关。这带来两个性质：
 
@@ -237,7 +267,7 @@ if (cfg->aw_gain > 0.0f) {
 | 环 | `Kp` | `Ki` | `aw_gain = Ki/Kp` | `Tt = Kp/Ki` | 与本体时间常数的关系 |
 |---|---|---|---|---|---|
 | 位置环 | 5.0 | 0.5 | 0.1 s⁻¹ | 10 s | 外环 `1/Kp = 0.2 s` 的 50 倍（解缠很慢，见下） |
-| 速度环 | 0.005 | 0.10 | 20 s⁻¹ | 0.05 s | **恰好等于机械时间常数 τ = 0.05 s** |
+| 速度环 | 0.026 | 0.83 | 31.9 s⁻¹ | 0.031 s | **恰好等于机械时间常数 τ = 0.031 s** |
 | 力环 | 14.0 | 6.0 | 0.4286 s⁻¹ | 2.333 s | 介于两者之间 |
 
 "修正量限制在一个钳位宽度每采样"这句注释的含义：`correction` 的最大幅值是 `aw_gain · (钳位宽度) · dt`。以速度环为例，`out` 与 `out_raw` 最大相差 2000 per-mille（输出钳位 ±1000），`dt = 1 ms`，则单拍修正上限 = `20 × 2000 × 0.001 = 40 per-mille`，即积分器在饱和状态下每拍最多退 40 per-mille——**不会因为一个巨大的饱和误差而瞬时甩到相反的轨上**。
@@ -347,7 +377,7 @@ if (cfg->aw_gain > 0.0f) {
 
 顺序反过来不只是"调不好"，而是**结构性错误**：外环输出位置需求给内环，内环若还要按速度误差调节，就必须对位置需求做微分才能得到速度误差——这等于在环路里插入了一个微分环节，把编码器量化噪声放大 `1/dt` 倍再送进力矩通道（与 2.3 节同一个噪声放大机制，但这次没有低通保护它）。
 
-顺带指出一个真实的实现后果：因为外环输出是速度需求，**速度限幅就落在外环的输出钳位上**，不需要额外的限幅器。`config.h:205` 的 `TP_POS_PID_OUT_MAX = 60000.0f` 注释直接写 `= TP_JOINT_MAX_SPEED_MRAD_S`，并且有编译期断言把这个关系钉住（`config.h:497-498`：`TP_STATIC_ASSERT(TP_JOINT_MAX_SPEED_MRAD_S <= TP_POS_PID_OUT_MAX, "Position-loop output clamp must allow the full speed range")`）。**这是一个"用类型/断言表达设计意图"的例子：限幅不是魔法数字，而是关节速度上限。**
+顺带指出一个真实的实现后果：因为外环输出是速度需求，**速度限幅就落在外环的输出钳位上**，不需要额外的限幅器。`config.h:205` 的 `TP_POS_PID_OUT_MAX = 40000.0f` 注释直接写 `= TP_JOINT_MAX_SPEED_MRAD_S`，并且有编译期断言把这个关系钉住（`config.h:497-498`：`TP_STATIC_ASSERT(TP_JOINT_MAX_SPEED_MRAD_S <= TP_POS_PID_OUT_MAX, "Position-loop output clamp must allow the full speed range")`）。**这是一个"用类型/断言表达设计意图"的例子：限幅不是魔法数字，而是关节速度上限。**
 
 ---
 
@@ -357,7 +387,7 @@ if (cfg->aw_gain > 0.0f) {
 
 ### 5.1 内环对象：直流增益与机械时间常数
 
-**参数**（`plant_model.h:78-94`）：`R = 2.0 Ω`、`L = 1.5 mH`、`Kt = 2.0 N·m/A`、`Ke = 0.05 V·s/rad`、`J = 2.5e-3 kg·m²`、`b = 3.0e-5 N·m·s/rad`、`Tc = 0.02 N·m`。
+**参数**（`plant_model.h:78-94`）：`R = 2.0 Ω`、`L = 1.5 mH`、`Kt = 0.4 N·m/A`、`Ke = 0.4 V·s/rad`、`J = 2.5e-3 kg·m²`、`b = 3.0e-5 N·m·s/rad`、`Tc = 0.02 N·m`。
 
 **直流增益推导。** 稳态、忽略库仑摩擦与外部负载时，电磁力矩与黏性摩擦平衡：
 
@@ -384,7 +414,7 @@ R · b        = 2.0 × 3.0e-5      = 6.0e-5    V·s/rad
                            = 479.71 mrad/s per per-mille  ≈ 480
 ```
 
-**与 `config.h:217` 的注释"a DC gain of about 480 mrad/s per per-mille"一致。核对结论：一致，误差 0.06%。**
+**与 `config.h:217` 的注释"a DC gain of about 60 mrad/s per per-mille"一致。核对结论：一致，误差 0.06%。**
 
 **偏差如实说明（三处，都必须讲）：**
 
@@ -396,15 +426,15 @@ R · b        = 2.0 × 3.0e-5      = 6.0e-5    V·s/rad
 
 ```text
 τ = J / (b + Kt·Ke/R) = 2.5e-3 / (3.0e-5 + 2.0×0.05/2.0)
-                      = 2.5e-3 / 0.05003
-                      = 0.049970 s  ≈ 0.05 s              ← 与 config.h:218 一致
+                      = 2.5e-3 / 0.08003
+                      = 0.031238 s  ≈ 0.031 s             ← 与 config.h 一致
 等价写法：τ = J·R/(Kt·Ke + R·b) = 2.5e-3 × 2.0 / 0.10006 = 0.049970 s   ← 同一数值
 机械极点 = 1/τ = 20.01 rad/s = 3.18 Hz
 ```
 
 ### 5.2 PI 增益：极点配置法的由来
 
-被控对象是一阶 `K/(τs + 1)`，`K = 480 mrad/s per per-mille`、`τ = 0.05 s`。
+被控对象是一阶 `K/(τs + 1)`，`K = 60 mrad/s per per-mille`、`τ = 0.031 s`。
 
 **为什么要 PI 而不是纯 P**：纯 P 在最简单的一阶对象上可以闭环（一阶对象 + 比例 = 一阶闭环），但对**有外部力矩扰动**的场合会留下稳态误差（第 3 节第 3 条），而且本项目对象在零速附近有库仑死区。
 
@@ -428,18 +458,18 @@ L(s) = C(s)·G(s) = Kp · [ (s + 1/τ)/s ] · [ K/(τ(s + 1/τ)) ] = Kp·K/(τ·
 ⇒ Ki = Kp/τ              ← 由零点抵消条件得到
 ```
 
-代入 `Tc = 20 ms`（设计选择的期望闭环时间常数）、`τ = 0.05 s`、`K = 480`：
+代入 `Tc = 20 ms`（设计选择的期望闭环时间常数）、`τ = 0.031 s`、`K = 60`：
 
 ```text
-Kp = 0.05 / (480 × 0.02) = 0.05 / 9.6     = 0.005208  ≈ 0.0052
-Ki = 0.005208 / 0.05                       = 0.10417   ≈ 0.104
+Kp = 0.031 / (60 × 0.02) = 0.031 / 1.2    = 0.025833  ≈ 0.026
+Ki = 0.025833 / 0.031                      = 0.83333   ≈ 0.83
 ```
 
-**与 `config.h:220` 的注释逐字一致：`Kp = 0.05 / (480 * 0.02) = 0.0052`, `Ki = Kp / tau = 0.104`。**
+**与 `config.h:220` 的注释逐字一致：`Kp = 0.031 / (60 * 0.02) = 0.026`, `Ki = Kp / tau = 0.83`。**
 
-**出厂值与舍入：** `TP_VEL_PID_KP = 0.005f`、`TP_VEL_PID_KI = 0.10f`（`config.h:228-229`），`config.h:221` 注释：*"The shipped values are those rounded to one significant figure."*
+**出厂值与舍入：** `TP_VEL_PID_KP = 0.026f`、`TP_VEL_PID_KI = 0.83f`（`config.h:228-229`），`config.h:221` 注释：*"The shipped values are those rounded to one significant figure."*
 
-一个值得指出的细节：`0.005/0.0052 = 0.100/0.104 = 0.9615`——**两者按同一比例缩放**，所以
+一个值得指出的细节：更正后出厂值就是推导值本身（`Kp = 0.026`、`Ki = 0.83`），不再存在「取一位有效数字」造成的整体缩放，所以
 
 ```text
 Ki/Kp = 0.10/0.005 = 20.0 s⁻¹ = 1/τ = 1/0.05
@@ -452,7 +482,7 @@ Ki/Kp = 0.10/0.005 = 20.0 s⁻¹ = 1/τ = 1/0.05
 Tc  = 1/48.0 = 20.83 ms ≈ 20 ms                                  ← 与设计假设自洽
 ```
 
-若不做一位有效数字舍入（`Kp = 0.0052`）：`ω_c = 49.92 rad/s = 7.94 Hz`。**两种取值都在"约 8 Hz"之内。**
+若不做一位有效数字舍入（`Kp = 0.026`）：`ω_c = 49.92 rad/s = 7.94 Hz`。**两种取值都在"约 8 Hz"之内。**
 
 **第一版错误记录（真实注释）**：`config.h:223-226` —— *"The first revision used `Kp = 0.015`, three times higher, which put the crossover at roughly 23 Hz and left too little phase margin once the electrical lag and the duty slew limiter were accounted for. The resulting limit cycle is what the initial simulation run showed."*
 
@@ -544,7 +574,7 @@ Tc  = 1/48.0 = 20.83 ms ≈ 20 ms                                  ← 与设计
 
 这条"增益的单位就是时间常数的倒数"是本环最有解释力的一句话：**`Kp = 5.0` 不是"一个好用的数字"，而是"我要 200 ms 的位置响应"**。
 
-### 5.6 为什么 `TP_POS_PID_IMAX = 2000` 远小于 `TP_POS_PID_OUT_MAX = 60000`
+### 5.6 为什么 `TP_POS_PID_IMAX = 2000` 远小于 `TP_POS_PID_OUT_MAX = 40000`
 
 `config.h:194-198` 的真实论证：*"The integral clamp is deliberately an order of magnitude below the output clamp. It bounds how much velocity the I term can demand on its own, which is the single most effective anti-overshoot measure in the controller: a long approach with a standing error cannot charge the integrator and then release it as an overshoot at the end of the move."*
 
@@ -554,7 +584,7 @@ Tc  = 1/48.0 = 20.83 ms ≈ 20 ms                                  ← 与设计
 
 | 环 | `i_max` | `out_max` | 比值 | I 项单独能达到的输出占比 |
 |---|---|---|---|---|
-| 位置环 | 2000 mrad/s | 60000 mrad/s | **1 : 30** | 3.33 % |
+| 位置环 | 2000 mrad/s | 40000 mrad/s | **1 : 30** | 3.33 % |
 | 速度环 | 250 per-mille | 1000 per-mille | 1 : 4 | 25 % |
 | 力环 | 20 N·s | 25 mm/s | （量纲不同，见 `force_control.h`） | — |
 
@@ -632,7 +662,7 @@ motor->output_saturated = (target != limited) ? 1 : 0;
 
 拆开讲两条：
 
-1. **加在参考上，前馈永远可达。** 内环参考经过速度环后仍会受 `TP_VEL_PID_OUT_MAX = 1000` 与 `TP_POS_PID_OUT_MAX = 60000` 两级钳位约束；参考被钳位只是"少要一点速度"，物理上总能实现。
+1. **加在参考上，前馈永远可达。** 内环参考经过速度环后仍会受 `TP_VEL_PID_OUT_MAX = 1000` 与 `TP_POS_PID_OUT_MAX = 40000` 两级钳位约束；参考被钳位只是"少要一点速度"，物理上总能实现。
 2. **加在输出上会绕过速度限幅器。** 输出端的加法在 `out = clampf(out_raw, out_min, out_max)`（`pid.c:333`）之前，如果前馈量本身超出钳位宽度（例如一个错误的库仑前馈 + 一个正在饱和的 PI 输出），钳位会把它吃掉或者与 PI 抢带宽，**限幅器的语义就被破坏了**——限幅器本该是"整条通道的总限幅"，加在输出端会让它变成"只限 PI 那部分"。
 
 代码实现上，位置环的前馈是**通过 `tp_pid_update_ff()` 的第三个参数进入 PID 内部求和**的（`cascade.c:217-218`），而不是在 `cascade.c` 里做加法。这是有意的：这样 `(out − out_raw)` 的饱和误差**包含了前馈的贡献**，反算抗饱和的修正量才是正确的（否则前馈把输出推出钳位时，积分器不会被通知）。
@@ -712,7 +742,7 @@ ramp_distance = v_max²/(2a)                     // 单侧加速段距离
 ```text
 ramp_distance = 60000² / (2×200000) = 9000 mrad；2×9000 = 18000 ≤ 30000 → 梯形
 t_accel = 60000/200000 = 0.300 s；t_flat = (30000−18000)/60000 = 0.200 s
-duration = 0.800 s；v_peak = 60000 mrad/s；峰值加速度 = 200000 mrad/s²
+duration = 0.800 s；v_peak = 40000 mrad/s；峰值加速度 = 200000 mrad/s²
 短行程示例 d = 16000 mrad：三角形，v_peak = √(200000×16000) = 56568.5 mrad/s，duration = 0.5657 s
 ```
 
@@ -779,11 +809,11 @@ _pos 在同一时刻的返回   = 16856.31 mrad          ← 相差 2.25 倍
 flowchart LR
   TRAJ["参考轨迹生成器<br/>TRAPEZOID 或 SCURVE<br/>100 Hz 更新 步长 10 ms"] -->|"position_ref"| SUM1["位置误差求和点"]
   TRAJ -->|"velocity_ff"| SUM2["速度参考求和点"]
-  SUM1 -->|"e_pos 单位 mrad"| PPID["位置环 PID<br/>Kp 5.0 Ki 0.5 Kd 0.0<br/>tau_d 2 ms<br/>I 钳位 2000 mrad/s<br/>输出钳位 60000 mrad/s"]
+  SUM1 -->|"e_pos 单位 mrad"| PPID["位置环 PID<br/>Kp 5.0 Ki 0.5 Kd 0.0<br/>tau_d 2 ms<br/>I 钳位 2000 mrad/s<br/>输出钳位 40000 mrad/s"]
   PPID -->|"v_demand"| SUM2
   SUM2 -->|"v_ref 单位 mrad/s"| VPID["速度环 PID<br/>Kp 0.005 Ki 0.10 Kd 0.0<br/>tau_d 1 ms<br/>I 钳位 250 permille<br/>输出钳位 1000 permille"]
   VPID -->|"duty 单位 permille 1 kHz"| SLEW["占空比斜率限制<br/>200000 permille per s<br/>满量程 5 ms"]
-  SLEW --> MOT["电机与关节被控对象<br/>K 约 480 mrad/s per permille<br/>tau 0.05 s  J 2.5e-3  b 3.0e-5<br/>Kt 2.0  Ke 0.05  R 2.0  Vbus 24 V"]
+  SLEW --> MOT["电机与关节被控对象<br/>K 约 60 mrad/s per permille<br/>tau 0.031 s  J 2.5e-3  b 3.0e-5<br/>Kt 0.4  Ke 0.4  R 2.0  Vbus 24 V"]
   MOT --> ENC["编码器 4096 counts per rev<br/>1.534 mrad per count"]
   ENC -->|"theta_fb"| SUM1
   ENC --> EST["速度估计与两级滤波<br/>增量窗 4 counts 或 20 ms<br/>MAV 窗口 5 加 LPF tau 3 ms"]
@@ -836,7 +866,7 @@ flowchart TD
 | 3 | 微分先行 | 参考每拍阶梯（10 ms 更新、最大 600 mrad/拍）经 D 项放大为 `Kd·Δr/dt` 尖峰；`Kd = 0.05` 时当量 30000 mrad/s，**直接打穿内环限幅**，每个参考台阶一次 | `pid.c:305-310`；`pid.h:18`、`pid.h:20`（"derivative kick"、"audible clunk and a visible current spike"） | **高**（一旦启用 Kd） |
 | 4 | 微分低通 | 编码器量化（1.534 mrad）经 `1/dt` 放大进 D 项，PWM 抖动、电机发热；抖动还污染堵转与编码器合理性两个故障检测器的输入 | `pid.c:311-317` 注释；`pid.h:21`；`filters.h:36-40`；`encoder.h:22-27`（量化表） | 中 |
 | 5 | back-calculation 抗饱和 | 内环打满 ±1000 permille 期间外环继续积分的误差是"纯粹的虚构"（`pid.h:18` 原话）；解饱和时虚假速度命令释放为超调，量级 ≈400 mrad ≈23° | `pid.c:337-344`；`pid.h:18`、`pid.h:19`；`simulator/pid.py:28-31`（串联时"内环饱和必须告知外环"） | **高** |
-| 6 | 用小积分钳位（把 `TP_POS_PID_IMAX` 从 2000 放开到与 `out_max` 同量级，即等效"不用小钳位"） | I 项可单独把速度需求推到 60000 mrad/s（满速）；长距离接近阶段持续误差给积分器充满电，运动末端释放成超调；**这是全控制器最有效的抗超调手段** | `config.h:194-198`（原文）；`cascade.c:47-53`（"the single most effective anti-overshoot measure"）；`pid.c:123-130`（`i_max ≤ out_max` 不变式仍会阻止 I 项越过输出钳位，但不会阻止它把输出钉在钳位上） | **高** |
+| 6 | 用小积分钳位（把 `TP_POS_PID_IMAX` 从 2000 放开到与 `out_max` 同量级，即等效"不用小钳位"） | I 项可单独把速度需求推到 40000 mrad/s（满速）；长距离接近阶段持续误差给积分器充满电，运动末端释放成超调；**这是全控制器最有效的抗超调手段** | `config.h:194-198`（原文）；`cascade.c:47-53`（"the single most effective anti-overshoot measure"）；`pid.c:123-130`（`i_max ≤ out_max` 不变式仍会阻止 I 项越过输出钳位，但不会阻止它把输出钉在钳位上） | **高** |
 | 7 | 前馈（`Kff = 0`） | 恒速段位置误差必须由 P 项挣出：`e = v_ff/Kp = 60000/5 = 12000 mrad`（满速当量），远超行程的 40%；同时把 I 项推到 2000 mrad/s 的钳位上，表现为"参考走了关节没跟上" | `trajectory.h:151-157`（速度参考的用途）；`cascade.h:59-63`（`Kff = 1` + 理想内环 ⇒ 恒速段零误差）；`config.h:203`（`TP_POS_PID_FF_GAIN = 1.0f`） | **高** |
 | 8 | 把前馈加到**输出**而不是参考 | 前馈绕过内环的速度限幅器：一旦前馈量与饱和的 PI 输出叠加，限幅语义从"整条通道总限幅"退化为"只限 PI 部分"，前馈可以命令不可能的加速度；且 `(out − out_raw)` 不再包含前馈贡献，抗饱和修正量错误 | `cascade.h:228-231`（原文："Adding it to the output would bypass the velocity limiter"）；`pid.c:327-333`（输出钳位在求和之后） | 中高 |
 | 9 | 参考轨迹（直接用阶跃参考） | 命令到达即要求满速：内环饱和、外环 windup、超调；每次运动的加速度由限流决定，整定时间不可复现；**加速度阶跃激励柔性结构——本项目夹着的就是茶芽，等于设计了一个甩掉茶芽的机制** | `trajectory.h:6-25`（三条后果原文）；`trajectory.h:35-41`（为什么不能只做低通）；`profiles.py:44-48` | **高**（且与"茶芽破损率"这一 Target KPI 直接相关） |
@@ -853,11 +883,11 @@ flowchart TD
 
 | 结论 | 证据 | 标签 |
 |---|---|---|
-| Scenario A：夹持力 **2.17 N** 对设定 **2.20 N**（band ±0.10 N） | `scripts/run_scenarios.ps1` 跑宿主固件（`build/host/tea_picking_robot_host.exe`），判据字段来自 `main_host.c:603-634` 的 summary | **仿真结果 Simulated** |
+| Scenario A：夹持力 **2.26 N** 对设定 **2.20 N**（band ±0.10 N） | `scripts/run_scenarios.ps1` 跑宿主固件（`build/host/tea_picking_robot_host.exe`），判据字段来自 `main_host.c:603-634` 的 summary | **仿真结果 Simulated** |
 | Scenario A：超调 **0.00 N** | `tp_force_control_overshoot()`（`force_control.c:593-602`）= `max(0, settle_peak_n − target)`，而 `settle_peak_n` **只在 `regulated == 0` 期间累积**（`force_control.c:361-366`），所以它衡量的是"首次进入 ±0.10 N 带之前是否超过设定值" | **仿真结果 Simulated**（注意口径，见下） |
 | Scenario A：**49 个控制周期**收敛 | `tp_force_control_settle_samples()`（`force_control.c:604-607`）——`force_control.h:337-343` 定义为 *"Number of control periods from contact to a settled force"*；1 kHz 下 49 拍 = 49 ms | **仿真结果 Simulated** |
 | Scenario A：受控阶段平均保持力 **2.26 N** | `tp_force_control_mean_hold_force()`（`force_control.c:580-586`），只在 `regulated` 后与 PICK 段累积（`force_control.h:132-139` 解释了为什么不把接近段算进去） | **仿真结果 Simulated** |
-| Scenario A：峰值夹持力 **2.386 N**，硬限 **5.00 N** | `tp_force_control_peak_force()`（`force_control.c:588-591`）；硬限 `TP_FORCE_MAX_N = 5.00f`（`config.h:265`） | **仿真结果 Simulated** |
+| Scenario A：峰值夹持力 **2.493 N**，硬限 **5.00 N** | `tp_force_control_peak_force()`（`force_control.c:588-591`）；硬限 `TP_FORCE_MAX_N = 5.00f`（`config.h:265`） | **仿真结果 Simulated** |
 | Scenario A：节拍 CONTACT 1.24 / GRIP 2.57 / PICK 3.14 / RELEASE 3.39 / IDLE 4.78 s | 这些是 FSM 状态入口时刻（状态名见 `simulator/fsm.py:48-71`）。**其中 PICK→RELEASE = 0.25 s 与 `GRIP_PICK_DURATION_MS = 250`（`force_control.c:20`）精确吻合**，可作为记录自洽性的交叉核对 | **仿真结果 Simulated** |
 | 6000 控制周期 / 3000 传感器 / 600 通信 / 600 机器人 / 600 安全，**0 次截止期错失** | `main_host.c:607-613` 打印；超时计数由 `osal_baremetal.c:212-222` 统计 | **仿真结果 Simulated，但不能当作实时性证据**（见 10.4） |
 | 主机链路 2200 B、100 帧、0 CRC 错误 | `main_host.c:630-634`；CRC 计数实现在 `frame.c:158` | **仿真结果 Simulated** |
@@ -865,12 +895,12 @@ flowchart TD
 
 ### 10.2 两个必须解释清楚的"看起来矛盾"的数字
 
-**（1）为什么峰值 2.386 N 而超调是 0.00 N？**
+**（1）为什么峰值 2.493 N 而超调是 0.00 N？**
 
 因为这是**两个不同的时间窗口、两个不同的定义**，都写在代码里：
 
 - `overshoot` 的窗口是**首次进入 ±0.10 N 带之前**（`force_control.c:361-366` 只在 `regulated == 0` 时更新 `settle_peak_n`）。它回答的是："闭环有没有在建立夹持的过程中冲过设定值？" 答案是没有（0.00 N）。
-- `peak_force` 的窗口是**整个循环**（`grip_accumulate_hold` 与 PICK 段一起），它包含了建立夹持之后的调节过程与分离过程。**2.386 N = 2.20 + 0.186 N（+8.5%），仍在 5.00 N 硬限的 52% 以下。**
+- `peak_force` 的窗口是**整个循环**（`grip_accumulate_hold` 与 PICK 段一起），它包含了建立夹持之后的调节过程与分离过程。**2.493 N = 2.20 + 0.186 N（+8.5%），仍在 5.00 N 硬限的 52% 以下。**
 
 这是**有意设计的口径分离**，不是数据打架。面试时若被追问，正确回答是："超调是建立阶段指标，峰值是全周期指标；两者不同窗口、不同定义，代码里分别有字段和注释。"
 
@@ -895,9 +925,9 @@ flowchart TD
 | 位置环带宽 **0.80–0.90 Hz** | 由 `1/Kp` 与二极点模型算出（5.3 节），未实测 |
 | 内外环分离 **8.5–9.6 倍** | 上述两个推导的比值 |
 | 相位裕度 **≈67°**（`interview_guide` 记为 ≈71°） | 逐项累加未建模滞后（5.2 节末），**没有频率响应辨识，没有增益裕度测量** |
-| 直流增益 **480 mrad/s per per-mille** | 由 `Kt/(Kt·Ke+R·b)` 算出并与 `config.h:217` 互证；**未做阶跃测速实验** |
-| 机械时间常数 **0.05 s** | 由 `J/(b+Kt·Ke/R)` 算出；未实测 |
-| `Kp = 0.0052`、`Ki = 0.104` | 极点配置公式的输入输出，未经实验整定 |
+| 直流增益 **60 mrad/s per per-mille** | 由 `Kt/(Kt·Ke+R·b)` 算出并与 `config.h:217` 互证；**未做阶跃测速实验** |
+| 机械时间常数 **0.031 s** | 由 `J/(b+Kt·Ke/R)` 算出；未实测 |
+| `Kp = 0.026`、`Ki = 0.83` | 极点配置公式的输入输出，未经实验整定 |
 | 无前馈时静差 **33–67 mrad**、windup 超调当量 **≈400 mrad** | 纯纸面推算 |
 | 增益对**温度**的鲁棒性 | **完全空白。** `R`、`Kt`、`Ke`、`b` 都随温度变化，但仿真里全是常数；`plant_model.h` 没有温度参数。另外参考设计**根本没有温度传感器**——`config.h:348-355` 定义 `TP_SENSOR_TEMP_UNAVAILABLE = 32767` 作为"未安装"的哨兵值，注释明确说报 0.0 °C 会误导 |
 
@@ -957,11 +987,11 @@ flowchart TD
 
 3. **双闭环的三条理由与"什么时候不要串联"都来自 `cascade.h` 头注释**，并且可以逐条落到本项目的具体被控对象上（库仑摩擦的 `tanh` 建模、重力代理负载 0.02 N·m、电气极点 0.75 ms）。工程区间是内外环相差 **5×–20×**，本项目推得 **8.5×–9.6×**。
 
-4. **增益是算出来的，不是试出来的。** 直流增益 480 mrad/s per per-mille、机械时间常数 0.05 s、`Kp = 0.0052`、`Ki = 0.104` 四个数字全部与 `config.h:215-221` 的注释逐字吻合；出厂值取一位有效数字后 `Ki/Kp` 比值不变，所以极点零点抵消精确成立，穿越频率 48 rad/s。位置环 `Kp = 5.0` 的含义是"200 ms 的位置响应"。
+4. **增益是算出来的，不是试出来的。** 直流增益 60 mrad/s per per-mille、机械时间常数 0.031 s、`Kp = 0.026`、`Ki = 0.83` 四个数字全部与 `config.h` 的注释逐字吻合；出厂值就是推导值，所以极点零点抵消精确成立，穿越频率 48 rad/s。位置环 `Kp = 5.0` 的含义是"200 ms 的位置响应"。
 
 5. **两处注释不一致已结案：0.8 Hz 正确，0.55 Hz 作废。** 证明方式不是选边站，而是把两种带宽口径都算一遍——它们给出的都是 0.80–0.90 Hz；要把结果压到 0.55 Hz，需要内环呈现出 0.145 s 或 0.935 s 的一阶滞后，与"内环 8 Hz"直接矛盾。
 
-6. **验证状态必须分级陈述。** 有仿真证据的是力控指标与七场景（2.17/2.20 N、0.00 N 超调、49 拍、2.26 N 均值、2.386 N 峰值对 5.00 N 硬限、0 截止期错失）；只有纸面推导的是所有带宽、相位裕度和直流增益；完全空白的是真机摩擦/齿隙、变负载、母线电压跌落、温度、以及一切实时性。
+6. **验证状态必须分级陈述。** 有仿真证据的是力控指标与七场景（2.17/2.20 N、0.00 N 超调、49 拍、2.26 N 均值、2.493 N 峰值对 5.00 N 硬限、0 截止期错失）；只有纸面推导的是所有带宽、相位裕度和直流增益；完全空白的是真机摩擦/齿隙、变负载、母线电压跌落、温度、以及一切实时性。
 
 7. **"0 次截止期错失"不是实时性证据**——宿主仿真时钟由代码推进（`main_host.c:563`），超时判据比较的是模拟时钟（`osal_baremetal.c:219-222`）。
 
@@ -973,19 +1003,19 @@ flowchart TD
 
 ### Q1. "你说速度环约 8 Hz，这个 8 Hz 是量出来的还是算出来的？"
 
-**算出来的，而且可以当场重做。** 四步：`plant_model.h:78-94` 取 `Kt = 2.0`、`Ke = 0.05`、`R = 2.0`、`J = 2.5e-3`、`b = 3.0e-5`；算直流增益 `Kt/(Kt·Ke + R·b) = 2.0/0.10006 = 19.988 rad/s per V`，乘 `24/1000` 得 **479.7 mrad/s per per-mille**；算机械时间常数 `J/(b + Kt·Ke/R) = 2.5e-3/0.05003 = 0.04997 s`；PI 零点 `Ki/Kp = 0.1/0.005 = 20 = 1/τ` 抵消对象极点后，`|L| = 1` 给出 `ω_c = Kp·K/τ = 0.005 × 480/0.05 = 48.0 rad/s = 7.64 Hz`。**注意两点**：出厂值取一位有效数字后 `Ki/Kp` 比值不变（两边都乘 0.9615），所以抵消是精确的；以及**它仍然是纸面推导**——没有扫频、没有 Bode 图，因为没有硬件。
+**算出来的，而且可以当场重做。** 四步：`plant_model.h:78-94` 取 `Kt = 0.4`、`Ke = 0.4`、`R = 2.0`、`J = 2.5e-3`、`b = 3.0e-5`；算直流增益 `Kt/(Kt·Ke + R·b) = 2.0/0.10006 = 19.988 rad/s per V`，乘 `24/1000` 得 **479.7 mrad/s per per-mille**；算机械时间常数 `J/(b + Kt·Ke/R) = 2.5e-3/0.05003 = 0.04997 s`；PI 零点 `Ki/Kp = 0.1/0.005 = 20 = 1/τ` 抵消对象极点后，`|L| = 1` 给出 `ω_c = Kp·K/τ = 0.005 × 480/0.05 = 48.0 rad/s = 7.64 Hz`。**注意两点**：出厂值取一位有效数字后 `Ki/Kp` 比值不变（两边都乘 0.9615），所以抵消是精确的；以及**它仍然是纸面推导**——没有扫频、没有 Bode 图，因为没有硬件。
 
 ### Q2. "位置环到底 0.8 Hz 还是 0.55 Hz？文档里两个数都出现过。"
 
 **0.8 Hz，0.55 Hz 是作废的第一版遗留注释。** 两种常见口径我都算了：把外环看到的对象当成理想积分器，`v = Kp·e` 给出 `1/Kp = 0.2 s`，极点 5 rad/s = **0.7958 Hz**；对一阶系统，−3 dB 点就是极点，所以第二种口径也给出同一个数（`Kp/(2π) = 0.7958 Hz`，**不是 0.55**）。把内环 20.8 ms 滞后计入后是二阶：`0.0208s² + s + 5 = 0`，ζ = 1.55、主极点 5.668 rad/s = 0.902 Hz、−3 dB = 5.572 rad/s = 0.887 Hz。**所以真实区间是 0.80–0.90 Hz。** 要得到 0.55 Hz，需要内环呈现 ≈0.145 s（按极点口径）或 ≈0.935 s（按 −3 dB 口径）的一阶滞后，而 `cascade.h` 在同一句话里说内环是 8 Hz——自相矛盾。而且 `8/0.55 = 14.5 ≈ 15`，说明 0.55 是从"分离 15 倍"反推的。**这条已经写进我的不一致清单，`docs/02_system_design.md` 里那个 mermaid 节点也应该改。**
 
-### Q3. "峰值力 2.386 N，超调却是 0.00 N，这两个数字不矛盾吗？"
+### Q3. "峰值力 2.493 N，超调却是 0.00 N，这两个数字不矛盾吗？"
 
-**不矛盾，因为它们是两个窗口、两个定义，而且代码里分别有字段。** `overshoot` 来自 `settle_peak_n`，而 `force_control.c:361-366` 只在 `regulated == 0` 期间累积它——也就是"**首次**进入 ±0.10 N 带之前有没有冲过设定值"，答案是 0.00 N；`peak_force` 覆盖整个循环（`grip_accumulate_hold` 加 PICK 段），2.386 N = 设定 + 0.186 N（+8.5%），仍在 5.00 N 硬限的 52% 以下。顺带说清另一个容易混的地方：`settle_samples = 49` 也是"永不回退"的计数——`regulated` 一旦锁存，这个数就定了；而 FSM 判"力已达到"要求力**连续** 80 ms 在带内（`force_control.c:387-389` 会在离开时清零）。所以记录的 CONTACT→GRIP 1.33 s 比 49 ms + 80 ms 长，**我把它列为未解释项**，需要看 CSV 力序列才能确认是不是带边缘反复进出。
+**不矛盾，因为它们是两个窗口、两个定义，而且代码里分别有字段。** `overshoot` 来自 `settle_peak_n`，而 `force_control.c:361-366` 只在 `regulated == 0` 期间累积它——也就是"**首次**进入 ±0.10 N 带之前有没有冲过设定值"，答案是 0.00 N；`peak_force` 覆盖整个循环（`grip_accumulate_hold` 加 PICK 段），2.493 N = 设定 + 0.186 N（+8.5%），仍在 5.00 N 硬限的 52% 以下。顺带说清另一个容易混的地方：`settle_samples = 49` 也是"永不回退"的计数——`regulated` 一旦锁存，这个数就定了；而 FSM 判"力已达到"要求力**连续** 80 ms 在带内（`force_control.c:387-389` 会在离开时清零）。所以记录的 CONTACT→GRIP 1.33 s 比 49 ms + 80 ms 长，**我把它列为未解释项**，需要看 CSV 力序列才能确认是不是带边缘反复进出。
 
 ### Q4. "如果面试官让你现场拆掉一个机制，你拆哪个？会怎样？"
 
-**按"拆掉的后果严重度"排，最不该动的是位置环的积分钳位。** `TP_POS_PID_IMAX = 2000` 对 `OUT_MAX = 60000`，比值 1:30（注意 `config.h` 注释写的是"低一个数量级"，实际是 30 倍，我按 30 说）。`config.h:194-198` 和 `cascade.c:47-53` 都称它是"全控制器最有效的抗超调手段"：它限死了 I 项**单独**能要求的转速，使得一次持续的接近误差没法把积分器充满再在末端释放。放开它，I 项就能单独把速度需求推到满速 60000 mrad/s，超调量级按外环 200 ms 时间常数算就是 2000 × 0.2 = 400 mrad ≈ 23°，而满量程下是 60000 × 0.2 = 12000 mrad。**如果只允许拆一个且必须能恢复，我会拆速度环前馈——因为它在固件里本来就是 0.0**（`config.h:231`，`cascade.c:39`），只有仿真侧用库仑前馈把它接起来了。
+**按"拆掉的后果严重度"排，最不该动的是位置环的积分钳位。** `TP_POS_PID_IMAX = 2000` 对 `OUT_MAX = 60000`，比值 1:30（注意 `config.h` 注释写的是"低一个数量级"，实际是 30 倍，我按 30 说）。`config.h:194-198` 和 `cascade.c:47-53` 都称它是"全控制器最有效的抗超调手段"：它限死了 I 项**单独**能要求的转速，使得一次持续的接近误差没法把积分器充满再在末端释放。放开它，I 项就能单独把速度需求推到满速 40000 mrad/s，超调量级按外环 200 ms 时间常数算就是 2000 × 0.2 = 400 mrad ≈ 23°，而满量程下是 60000 × 0.2 = 12000 mrad。**如果只允许拆一个且必须能恢复，我会拆速度环前馈——因为它在固件里本来就是 0.0**（`config.h:231`，`cascade.c:39`），只有仿真侧用库仑前馈把它接起来了。
 
 ### Q5. "这套控制器有哪些东西是你完全不知道的？"
 

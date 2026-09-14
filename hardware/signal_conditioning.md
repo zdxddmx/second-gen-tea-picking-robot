@@ -1,5 +1,35 @@
 # 第二代采茶机器人 — 模拟前端与信号调理设计（Analogue Front End & Signal Conditioning）
 
+<!-- REVISION NOTICE - do not remove -->
+> ### ⚠️ 参数修订说明（第三次校正，覆盖全文数值）
+>
+> 本文档写作期间，项目经历了三轮**更正**，因此正文中的部分**具体数字已经过期**。
+> 保留原文是为了不掩盖修正过程，但读数时请以代码为准。
+> **第三次更正的完整缺陷清单见 [`docs/12_results_analysis.md`](12_results_analysis.md) 的 §3.5。**
+>
+> | 常量 | 已废弃的值 | 当前值（权威） | 更正原因 |
+> |---|---|---|---|
+> | `TP_PLANT_MOTOR_KT_NM_PER_A` | 2.0 | **0.4** | SI 单位下 `Kt` 与 `Ke` 是同一物理量，原值相差 40 倍，违反能量守恒 |
+> | `TP_PLANT_MOTOR_KE_VS_RAD` | 0.05 | **0.4** | 同上 |
+> | `TP_VEL_PID_KP` | 0.005 | **0.026** | 被控对象 DC 增益由 480 变为 60 mrad/s/permille，必须重新整定 |
+> | `TP_VEL_PID_KI` | 0.10 | **0.83** | 同上 |
+> | `TP_POS_PID_KP` | 12.0 | **5.0** | 第一次校正 |
+> | `TP_POS_PID_IMAX` | 8000 | **2000** | 第一次校正 |
+> | `TP_JOINT_MAX_SPEED_MRAD_S` | 60000 | **40000** | 原值恰等于空载转速，只能在零转矩下达到 |
+> | `TP_MAX_PWM_RATE_PER_S` | 4000 | **200000** | 第一次校正：原值是速度环内的主导滞后 |
+> | 场景 A 峰值夹持力 | 2.493 N | **2.363 N** | 第三次校正：力背驱符号修正 |
+> | 场景 A 达到目标力 | 2.26 N | **2.18 N** | 同上 |
+> | 场景 A 接触间隙 | 5.688 mm | **5.682 mm** | 同上 |
+> | 场景 A 主机链路解码 | 2200 B / 100 帧 | **2134 B / 97 帧** | 同上 |
+> | `TP_PLANT_JAW_BACKDRIVE` 的作用方向 | 减去（`-=`） | **加上（`+=`）** | 符号错误使茎秆把空夹爪"吸"到机械硬限：力从 5.0 N 涨到 16.4 N，并误锁存传感器故障 |
+> | 力环服务速率 | 100 Hz（与注释不符） | **1 kHz** | 力环搬入 1 kHz 控制任务，"N 个控制周期"从此等于 N ms |
+>
+> **唯一权威**：`firmware/Application/config.h` 与 `firmware/BSP/host/plant_model.h`。
+> 二者的一致性由 `tests/test_config_agreement.py` 自动校验——它会解析这两个头文件并与
+> Python 模型逐条比对，因此任何再次漂移都会变成失败的测试而不是过期的文档。
+<!-- /REVISION NOTICE -->
+
+
 > ## ⚠️ 文档性质声明（必读）
 >
 > **本文档是设计文档 / 参考设计（Design Document / Reference Design），不是测试报告。**
@@ -560,7 +590,7 @@ graph TB
 **相干性的定量意义**：`tp_raw_sample_t.adc_counts[TP_ADC_COUNT]` 是一条**同一时刻**的快照【固件已定义】。若改为轮询，四个通道的读取时刻最多相隔 1 ms（一个控制周期）。在 1 ms 内：
 
 ```
-关节在 TP_JOINT_MAX_SPEED_MRAD_S = (60000.0f) 下转动 60 mrad
+关节在 TP_JOINT_MAX_SPEED_MRAD_S = (40000.0f) 下转动 60 mrad
 母线电流在该时间内可由 0 变化到 TP_PEAK_CURRENT_MA = 5000 mA
 ```
 
@@ -3417,8 +3447,8 @@ per second"*）。
 |---|---|---|---|
 | `TP_POS_PID_KP` | 12.0f | **5.0f** | *"Commanding `v = Kp * e` therefore closes the position loop with a time constant of `1 / Kp`; `Kp = 5.0` gives 200 ms, i.e. a bandwidth of about 0.8 Hz, which is a **10x separation** from the 8 Hz inner loop."* |
 | `TP_POS_PID_IMAX` | 8000.0f | **2000.0f** | *"The integral clamp is deliberately an order of magnitude below the output clamp. It bounds how much velocity the I term can demand *on its own*, which is the single most effective anti-overshoot measure"* |
-| `TP_VEL_PID_KP` | 0.015f | **0.005f** | *"The standard PI placement `Kp = tau / (K * Tc)` with a desired closed-loop time constant `Tc = 20 ms` gives `Kp = 0.05 / (480 * 0.02) = 0.0052`"*。*"The first revision used `Kp = 0.015`, three times higher, which put the crossover at roughly 23 Hz and left too little phase margin once the electrical lag and the duty slew limiter were accounted for. The resulting limit cycle is what the initial simulation run showed."* |
-| `TP_VEL_PID_KI` | 0.30f | **0.10f** | `Ki = Kp / tau = 0.104`，取一位有效数字 |
+| `TP_VEL_PID_KP` | 0.015f | **0.005f** | *"The standard PI placement `Kp = tau / (K * Tc)` with a desired closed-loop time constant `Tc = 20 ms` gives `Kp = 0.031 / (60 * 0.02) = 0.026`"*。*"The first revision used `Kp = 0.015`, three times higher, which put the crossover at roughly 23 Hz and left too little phase margin once the electrical lag and the duty slew limiter were accounted for. The resulting limit cycle is what the initial simulation run showed."* |
+| `TP_VEL_PID_KI` | 0.30f | **0.83f** | `Ki = Kp / tau = 0.83` |
 | `TP_VEL_PID_IMAX` | 400.0f | **250.0f** | 与新的 `Ki` 配套 |
 | `TP_MAX_DUTY_RATE_PER_S` | 4000.0f | **200000.0f** | 见 6.13.1 节 |
 
@@ -4113,7 +4143,7 @@ counts 偏移 = 1000 mV / 0.8056641 mV = 1241.2 counts
 `TP_FORCE_TARGET_N`(2.20f)、`TP_FORCE_TARGET_MIN_N`(0.80f)、`TP_FORCE_TARGET_MAX_N`(3.00f)、`TP_FORCE_CONTACT_N`(0.15f)、`TP_FORCE_SOFT_LIMIT_N`(3.50f)、`TP_FORCE_MAX_N`(5.00f)、`TP_FORCE_RELEASE_N`(0.10f)、`TP_FORCE_BAND_N`(0.10f)、`TP_FORCE_ADAPT_ENABLE`(1)、`TP_FORCE_ADAPT_ALPHA`(0.05f)、`TP_FORCE_ADAPT_MARGIN_N`(0.60f)、`TP_FORCE_PID_KP`(14.0f)、`TP_FORCE_PID_KI`(6.0f)、`TP_FORCE_PID_KD`(0.05f)、`TP_FORCE_PID_IMAX`(20.0f)、`TP_FORCE_PID_OUT_MAX`(25.0f)、`TP_FORCE_PID_OUT_MIN`(-25.0f)、`TP_FORCE_PID_TAU_D_S`(0.010f)、`TP_APPROACH_FAST_SPEED_MM_S`(40.0f)、`TP_APPROACH_SLOW_SPEED_MM_S`(6.0f)、`TP_APPROACH_SLOW_AT_MM`(4.0f)、`TP_GRIPPER_BACKOFF_MM`(12.0f)、`TP_GRIPPER_SETTLE_MS`(80u)
 
 **机械与电气限值**
-`TP_JOINT_MIN_MRAD`(-90000.0f)、`TP_JOINT_MAX_MRAD`(90000.0f)、`TP_JOINT_HOME_MRAD`(0.0f)、`TP_JOINT_MAX_SPEED_MRAD_S`(60000.0f)、`TP_GRIPPER_MIN_MM`(0.0f)、`TP_GRIPPER_MAX_MM`(40.0f)、`TP_GRIPPER_MAX_SPEED_MM_S`(120.0f)、`TP_ENCODER_MAX_ACCEL_MRAD_S2`(4000000.0f)
+`TP_JOINT_MIN_MRAD`(-90000.0f)、`TP_JOINT_MAX_MRAD`(90000.0f)、`TP_JOINT_HOME_MRAD`(0.0f)、`TP_JOINT_MAX_SPEED_MRAD_S`(40000.0f)、`TP_GRIPPER_MIN_MM`(0.0f)、`TP_GRIPPER_MAX_MM`(40.0f)、`TP_GRIPPER_MAX_SPEED_MM_S`(120.0f)、`TP_ENCODER_MAX_ACCEL_MRAD_S2`(4000000.0f)
 
 **总线**
 `TP_UART_DEBUG_BAUD`(115200u)、`TP_UART_VISION_BAUD`(921600u)、`TP_RS485_BAUD`(115200u)、`TP_CAN_BITRATE_BPS`(500000u)、`TP_MODBUS_SLAVE_ADDR`(0x11u)、`TP_PROTO_HEADER0`(0xAAu)、`TP_PROTO_HEADER1`(0x55u)、`TP_PROTO_MAX_PAYLOAD`(64u)、`TP_PROTO_OVERHEAD`(7u)、`TP_PROTO_MAX_FRAME`

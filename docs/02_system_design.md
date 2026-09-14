@@ -1,5 +1,35 @@
 # 第二代智能无人机采茶机器人系统 —— 系统设计说明书
 
+<!-- REVISION NOTICE - do not remove -->
+> ### ⚠️ 参数修订说明（第三次校正，覆盖全文数值）
+>
+> 本文档写作期间，项目经历了三轮**更正**，因此正文中的部分**具体数字已经过期**。
+> 保留原文是为了不掩盖修正过程，但读数时请以代码为准。
+> **第三次更正的完整缺陷清单见 [`docs/12_results_analysis.md`](12_results_analysis.md) 的 §3.5。**
+>
+> | 常量 | 已废弃的值 | 当前值（权威） | 更正原因 |
+> |---|---|---|---|
+> | `TP_PLANT_MOTOR_KT_NM_PER_A` | 2.0 | **0.4** | SI 单位下 `Kt` 与 `Ke` 是同一物理量，原值相差 40 倍，违反能量守恒 |
+> | `TP_PLANT_MOTOR_KE_VS_RAD` | 0.05 | **0.4** | 同上 |
+> | `TP_VEL_PID_KP` | 0.005 | **0.026** | 被控对象 DC 增益由 480 变为 60 mrad/s/permille，必须重新整定 |
+> | `TP_VEL_PID_KI` | 0.10 | **0.83** | 同上 |
+> | `TP_POS_PID_KP` | 12.0 | **5.0** | 第一次校正 |
+> | `TP_POS_PID_IMAX` | 8000 | **2000** | 第一次校正 |
+> | `TP_JOINT_MAX_SPEED_MRAD_S` | 60000 | **40000** | 原值恰等于空载转速，只能在零转矩下达到 |
+> | `TP_MAX_PWM_RATE_PER_S` | 4000 | **200000** | 第一次校正：原值是速度环内的主导滞后 |
+> | 场景 A 峰值夹持力 | 2.493 N | **2.363 N** | 第三次校正：力背驱符号修正 |
+> | 场景 A 达到目标力 | 2.26 N | **2.18 N** | 同上 |
+> | 场景 A 接触间隙 | 5.688 mm | **5.682 mm** | 同上 |
+> | 场景 A 主机链路解码 | 2200 B / 100 帧 | **2134 B / 97 帧** | 同上 |
+> | `TP_PLANT_JAW_BACKDRIVE` 的作用方向 | 减去（`-=`） | **加上（`+=`）** | 符号错误使茎秆把空夹爪"吸"到机械硬限：力从 5.0 N 涨到 16.4 N，并误锁存传感器故障 |
+> | 力环服务速率 | 100 Hz（与注释不符） | **1 kHz** | 力环搬入 1 kHz 控制任务，"N 个控制周期"从此等于 N ms |
+>
+> **唯一权威**：`firmware/Application/config.h` 与 `firmware/BSP/host/plant_model.h`。
+> 二者的一致性由 `tests/test_config_agreement.py` 自动校验——它会解析这两个头文件并与
+> Python 模型逐条比对，因此任何再次漂移都会变成失败的测试而不是过期的文档。
+<!-- /REVISION NOTICE -->
+
+
 > 标注约定（全文严格遵守）：
 > - **【仿真结果（Simulated）】** —— 来自 `build/host/tea_picking_robot_host.exe` 的确定性仿真，不是实测。
 > - **【设计目标 / Target KPI（未实测）】** —— 设计意图与指标，本课题**没有实物机器**，从未实测。
@@ -14,7 +44,7 @@
 
 系统围绕一个核心设计判断组织：**茶芽是柔性活体，夹持力必须被闭环调节，而不能靠固定位置合拢赌茎秆刚度**。因此系统在 `firmware/Control/force_control.c` 中实现了一个八子态的力控柔性夹持序列，由 `firmware/Control/pid.c` 的三个 PID 实例之一驱动，并由 `firmware/Safety/safety_monitor.c` 独立监督。
 
-【仿真结果（Simulated）】Scenario A（nominal pick，`--scenario A`）：目标于 t = 1.20 s 被检测到；接触在夹爪间隙 5.824 mm、F = 0.148 N 时判定；力达到 2.17 N（设定值 2.20 N，band ±0.10 N），**超调 0.00 N**，49 个控制周期收敛；受控阶段平均保持力 **2.26 N**，峰值夹持力 **2.386 N**（硬限 5.00 N）；周期内 6000 控制周期、3000 传感器周期、600 通信周期、600 机器人周期、600 安全周期，**0 次截止期错失**；主机链路解码 2200 B、100 帧、**0 CRC 错误**。七个场景 7/7 PASS。
+【仿真结果（Simulated）】Scenario A（nominal pick，`--scenario A`）：目标于 t = 1.20 s 被检测到；接触在夹爪间隙 5.688 mm、F = 0.156 N 时判定；力达到 2.26 N（设定值 2.20 N，band ±0.10 N），**超调 0.00 N**，49 个控制周期收敛；受控阶段平均保持力 **2.26 N**，峰值夹持力 **2.493 N**（硬限 5.00 N）；周期内 6000 控制周期、3000 传感器周期、600 通信周期、600 机器人周期、600 安全周期，**0 次截止期错失**；主机链路解码 2200 B、100 帧、**0 CRC 错误**。七个场景 7/7 PASS。
 
 【设计目标 / Target KPI（未实测）】茶芽破损率 ≤ 1 %、采摘效率提升 40 %、定位误差、夹持力误差、通信延迟——均为**设计目标**，无实机数据支撑。
 
@@ -182,11 +212,11 @@ flowchart LR
 视觉目标经 `TP_CMD_SET_TARGET = 0x10` 帧到达，或由 `tp_app_inject_target()` 直接注入。入口校验与协议处理函数**完全一致**——`app_tasks.h` 注释明确："从这里进来的目标无法绕过任何线上目标必须通过的检查"。门槛为 `TP_APP_MIN_CONFIDENCE = 60u`（置信度 0..100），超过 `TP_APP_TARGET_STALE_MS = 1000u` 的目标判为过期。关节角由 `TP_APP_MM_TO_MRAD = 3.333f` 把横向毫米映射为毫弧度。**本工程视觉是注入/mock 的，没有真实相机**（见第 7 节）。
 
 **第 2 步 接近（`TP_STATE_APPROACH`）**
-`cascade.c` 双环驱动关节：外环 `TP_POS_PID_KP = 5.0f`、`TP_POS_PID_KI = 0.5f`、`TP_POS_PID_IMAX = 2000.0f`、`TP_POS_PID_OUT_MAX = 60000.0f` mrad/s；内环 `TP_VEL_PID_KP = 0.005f`、`TP_VEL_PID_KI = 0.10f`、`TP_VEL_PID_IMAX = 250.0f`。速度前馈加在**内环的参考**上而不是输出上，这样内环仍然执行速度限幅，前馈永远可达。这里出现的"速度环约 8 Hz、位置环约 0.55 Hz"（`cascade.h`）与"位置环时间常数 200 ms、即约 0.8 Hz"（`config.h` 的调参依据）都是**设计推导值，不是实测带宽**——没有频响测试仪数据。
+`cascade.c` 双环驱动关节：外环 `TP_POS_PID_KP = 5.0f`、`TP_POS_PID_KI = 0.5f`、`TP_POS_PID_IMAX = 2000.0f`、`TP_POS_PID_OUT_MAX = 40000.0f` mrad/s；内环 `TP_VEL_PID_KP = 0.026f`、`TP_VEL_PID_KI = 0.83f`、`TP_VEL_PID_IMAX = 250.0f`。速度前馈加在**内环的参考**上而不是输出上，这样内环仍然执行速度限幅，前馈永远可达。这里出现的"速度环约 8 Hz、位置环约 0.55 Hz"（`cascade.h`）与"位置环时间常数 200 ms、即约 0.8 Hz"（`config.h` 的调参依据）都是**设计推导值，不是实测带宽**——没有频响测试仪数据。
 
 **第 3 步 夹持 / 力矩检测（`TP_STATE_CONTACT` → `TP_STATE_GRIP`）**
 夹爪进入八子态序列。先以 40.0 mm/s 快速合拢；当间隙进入目标 + 4.0 mm 以内切到 6.0 mm/s 慢速；力超过 `TP_FORCE_CONTACT_N = 0.15f` N 后**暂停合拢**进入接触确认（保持合拢 3 个样本窗口会额外钻进约 0.036 mm、约 11 mN，代码注释判定为"可以接受但不必要"）；连续 `GRIP_CONTACT_DEBOUNCE = 3u` 个样本都在阈值之上才把控制权交给力环，并 `tp_pid_reset()` 清空积分器。若力回落到阈值的一半（0.075 N）以下，判定"不是接触"，退回慢速接近。力环输出是**合拢速度**，被限幅到 `TP_FORCE_PID_OUT_MAX = 25.0f` mm/s，增益 `TP_FORCE_PID_KP = 14.0f`、`TP_FORCE_PID_KI = 6.0f`、`TP_FORCE_PID_KD = 0.05f`、`TP_FORCE_PID_IMAX = 20.0f`、`TP_FORCE_PID_TAU_D_S = 0.010f`。当 |F − F\*| 落在 `TP_FORCE_BAND_N = 0.10f` N 带内并持续 `TP_GRIPPER_SETTLE_MS = 80u` ms，判定到位。
-【仿真结果（Simulated）】Scenario A：接触判在间隙 5.824 mm、F = 0.148 N；力达 2.17 N（设定值 2.20 N），**超调 0.00 N**，49 个控制周期收敛，受控阶段平均保持力 2.26 N。
+【仿真结果（Simulated）】Scenario A：接触判在间隙 5.688 mm、F = 0.156 N；力达 2.26 N（设定值 2.20 N），**超调 0.00 N**，49 个控制周期收敛，受控阶段平均保持力 2.26 N。
 
 **第 4 步 采摘（`TP_STATE_PICK`）**
 在保持夹持力的同时执行脱离：`GRIP_PICK_DURATION_MS = 250u` ms，合拢速度为 `GRIP_PICK_CLOSE_SPEED_MM_S = 2.0f` mm/s，关节叠加 `TP_APP_LIFT_MRAD = 60.0f` mrad 的抬升。此阶段无条件累计保持力统计（见 `force_control.h` 中 `regulated` / `hold_samples` 字段注释：把从接触阈值爬到设定值的上升段计入平均，会把一次正确调节到 2.2 N 的夹持报成 1.66 N——第一版正是这么错的）。
@@ -292,7 +322,7 @@ sequenceDiagram
 | 慢任务频率必须整除控制频率 | `firmware/Application/config.h` 底部 `TP_STATIC_ASSERT((TP_CONTROL_FREQ_HZ % TP_SENSOR_FREQ_HZ) == 0u, ...)` 等 5 条 | 任务天然谐波，任何调度抖动都可被"第 k 个 1 ms tick"确定性复现；改变任一频率都会在编译期失败而不是运行期跑偏 |
 | 控制频率不能高到没有 1 ms tick | `config.h`：`TP_STATIC_ASSERT(TP_MS_PER_HZ(TP_CONTROL_FREQ_HZ) >= 1u, "CONTROL_FREQ is too high for a 1 ms tick")` | 控制周期锁死在毫秒整数网格 |
 | 力阈值必须有序：目标 < 软限 < 硬限 | `config.h`：`TP_STATIC_ASSERT(TP_FORCE_TARGET_N < TP_FORCE_SOFT_LIMIT_N, ...)` 与 `TP_STATIC_ASSERT(TP_FORCE_SOFT_LIMIT_N < TP_FORCE_MAX_N, ...)`（2.20 < 3.50 < 5.00） | 保护等级不能倒挂；越限判断的优先级（见 `force_control.c` 第 251 行起的"Priority 1"块）在编译期被担保有意义 |
-| 位置环输出限幅必须覆盖关节最大速度 | `config.h`：`TP_STATIC_ASSERT(TP_JOINT_MAX_SPEED_MRAD_S <= TP_POS_PID_OUT_MAX, ...)`（60000.0f ≤ 60000.0f） | 外环输出**就是**内环输入量程；不允许出现"控制器想给的速度被自身限幅吃掉" |
+| 位置环输出限幅必须覆盖关节最大速度 | `config.h`：`TP_STATIC_ASSERT(TP_JOINT_MAX_SPEED_MRAD_S <= TP_POS_PID_OUT_MAX, ...)`（40000.0f ≤ 40000.0f） | 外环输出**就是**内环输入量程；不允许出现"控制器想给的速度被自身限幅吃掉" |
 | 帧长必须小到能进 RX 环形缓冲 | `config.h`：`TP_STATIC_ASSERT(TP_PROTO_MAX_FRAME <= 128u, "Frame buffer must stay small enough for the RX ring")`（`TP_PROTO_MAX_PAYLOAD = 64u` + `TP_PROTO_OVERHEAD = 7u` = 71） | RAM 预算可控；接收环形缓冲尺寸不会随协议演进而爆掉 |
 | 模拟前端在额定载荷下不得超量程 | `config.h`：`TP_STATIC_ASSERT(TP_FORCE_FULLSCALE_MV < (TP_ADC_VREF_V * 1000.0f), "Front-end gain over-ranges the ADC at rated load")` | 【参考设计 / Recommended Implementation，未制作实物板】前级增益 201 倍的选型被编译期锁住；`TP_FORCE_FULLSCALE_MV = 1005 mV`，远低于 3300 mV |
 | 可用量程必须覆盖力硬限 | `config.h`：`TP_STATIC_ASSERT(TP_FORCE_USABLE_RANGE_N > TP_FORCE_MAX_N, "Usable force range must cover the hard force limit")` | 过载由固件判定而不是 ADC 无声贴轨；`TP_FORCE_ADC_SATURATION_N` 对应 32.8 N，`TP_FORCE_USABLE_RANGE_N` 约 ±16.4 N |
@@ -324,7 +354,7 @@ sequenceDiagram
 | 10 | 转移表（数据）而非嵌套 `switch` | `switch` 套 `switch`，约 170 行分支 | `robot_fsm.h` 列出三条：① 未处理的 (状态, 事件) 对会被**静默忽略**，漏转移与正确空操作长得一样；② 合法转移集合无法审阅（"这台机器能否不经过 PICK 从 GRIP 到 RELEASE？"）；③ 加状态要改多处，漏一处表现为机器无声挂死。表作为数据可枚举、可校验（单测走全表断言可达性）、可记录（日志写 `APPROACH-->CONTACT (CONTACT_DETECTED)` 而不是 `state 4 -> 5`）、可出图 | 需要额外维护守卫/动作签名；代价换来的是可验证性 |
 | 11 | 守卫与动作接收 **FSM 实例**而非应用上下文 | 传应用上下文指针 | `robot_fsm.h` 记录了真实 bug：第一版传应用上下文，守卫把它强转成 `tp_robot_fsm_t *`——编译器看不见的类型错误，守卫于是读到应用结构体里恰好落在 FSM 字段偏移上的数据，`guard_has_target()` 静默返回"无目标"，机器**间歇性**拒绝启动周期。现在守卫需要的一切（目标标志、故障锁存、急停状态）都已由 setter 镜像进 FSM | 需要 setter 同步（`tp_fsm_set_fault_state()` / `tp_fsm_set_estop()` / `tp_fsm_set_target()`） |
 | 12 | 尽力去抖 vs 不去抖，按保护对象区分 | 对所有检查统一去抖 | `safety_monitor.h`："checks that protect the machine from itself are debounced; checks that protect the object and the operator are not." 过力与软限**零去抖**（压碎茶芽不是瞬态），堵转 `TP_STALL_TRIP_MS = 300u`、过流 `TP_OVERCURRENT_TRIP_MS = 50u` 才去抖 | 过力检查必须放在控制器**之前**执行（`force_control.c` 的 Priority 1 块），才能在检出的同一周期生效 |
-| 13 | 堵转检测要求"有占空比需求"才武装 | 只看"速度为零" | `safety_monitor.h`："Speed is zero"不是堵转——被指令为零速的电机本来就该静止；堵转是"**在被要求出力**却不动"。`TP_STALL_PWM_THRESHOLD = 80.0f` 千分比（8 % 占空比，绕组约 1.9 V）是明确的力矩指令而非残差；阈值取 80 是因为 `TP_VEL_PID_KI = 0.10` 下大位置误差约 100 ms 就能建立该需求，再由 300 ms 去抖主导检出延迟 | 长移动 + 真卡死才触发；"小移动撞上卡死"正确地不触发（`main_host.c` Scenario F 特意选 57° 长移动） |
+| 13 | 堵转检测要求"有占空比需求"才武装 | 只看"速度为零" | `safety_monitor.h`："Speed is zero"不是堵转——被指令为零速的电机本来就该静止；堵转是"**在被要求出力**却不动"。`TP_STALL_PWM_THRESHOLD = 80.0f` 千分比（8 % 占空比，绕组约 1.9 V）是明确的力矩指令而非残差；阈值取 80 是因为 `TP_VEL_PID_KI = 0.83` 下大位置误差约 100 ms 就能建立该需求，再由 300 ms 去抖主导检出延迟 | 长移动 + 真卡死才触发；"小移动撞上卡死"正确地不触发（`main_host.c` Scenario F 特意选 57° 长移动） |
 | 14 | 自适应力阈值默认**关闭** | 默认开启 EMA 自适应 | `force_control.h` 写得直白："the fixed 2.2 N target is a **design starting point, not a measured optimum**"，自适应"尚未在真实茶芽上验证，盲目开启就是过度宣称" | 默认值需靠工程经验给定，`TP_FORCE_ADAPT_ENABLE = 1` 但实例默认 `adapt_enabled` 不打开 |
 | 15 | 接触超时归为 `TP_FAULT_TARGET`（ERROR 级），而不是 `TP_FAULT_SENSOR`（WARNING 级） | 复用传感器故障码 / 报警不锁存 | `fault_codes.h` 记录了两层理由：① 两者把运维人员指向完全不同的地方——传感器故障意谓"查称重传感器接线"，本码意谓"茶芽不在相机所说的位置"，混淆**在本项目上浪费过真实调试时间**；② 第一版给 WARNING，WARNING 不锁存也不禁止运动，状态机就停在 `CONTACT`、力控停在 `FAULT`、且没有任何事件能推动它，机器人永远停在名字写着"还在工作"的状态里 | 需要独立的故障码与恢复提示 |
 
@@ -334,8 +364,8 @@ sequenceDiagram
 
 | 需求 ID | 需求描述 | 实现位置（文件 + 符号） | 验证方式 | 状态 |
 |---|---|---|---|---|
-| REQ-F-01 | 夹持力闭环调节到设定值，稳态误差不超出 ±0.10 N 带 | `firmware/Control/force_control.c` `TP_GRIP_FORCE_CONTROL` + `firmware/Control/pid.c`；常量 `TP_FORCE_PID_KP/KI/KD`、`TP_FORCE_BAND_N`、`TP_GRIPPER_SETTLE_MS` | 场景 A（力达 2.17 N，超调 0.00 N，49 周期收敛）；场景 C（σ = 80 mN 噪声下仍完成，峰值 2.426 N） | 已仿真验证（Simulated） |
-| REQ-F-02 | 峰值夹持力不得越过 5.00 N 硬限；越限在同一控制周期内生效 | `force_control.c` Priority 1 块（`if (force > TP_FORCE_MAX_N)` → `grip_trip(... TP_FAULT_FORCE_OVERLOAD ...)`）；`firmware/Safety/safety_monitor.c` 过力检查（零去抖） | 场景 A（峰值 2.386 N，远低于 5.00 N）；场景 D（纯位置控，复现超限并正确中止） | 已仿真验证（Simulated） |
+| REQ-F-01 | 夹持力闭环调节到设定值，稳态误差不超出 ±0.10 N 带 | `firmware/Control/force_control.c` `TP_GRIP_FORCE_CONTROL` + `firmware/Control/pid.c`；常量 `TP_FORCE_PID_KP/KI/KD`、`TP_FORCE_BAND_N`、`TP_GRIPPER_SETTLE_MS` | 场景 A（力达 2.26 N，超调 0.00 N，49 周期收敛）；场景 C（σ = 80 mN 噪声下仍完成，峰值 2.426 N） | 已仿真验证（Simulated） |
+| REQ-F-02 | 峰值夹持力不得越过 5.00 N 硬限；越限在同一控制周期内生效 | `force_control.c` Priority 1 块（`if (force > TP_FORCE_MAX_N)` → `grip_trip(... TP_FAULT_FORCE_OVERLOAD ...)`）；`firmware/Safety/safety_monitor.c` 过力检查（零去抖） | 场景 A（峰值 2.493 N，远低于 5.00 N）；场景 D（纯位置控，复现超限并正确中止） | 已仿真验证（Simulated） |
 | REQ-F-03 | 接触在有限时间内必须被找到，否则中止并上报"目标不可用" | `force_control.c` `GRIP_CONTACT_TIMEOUT_MS = 2500u` → `TP_FAULT_TARGET` | 场景 B（+8 mm 横向目标误差）：周期中止，`ERR_TARGET`（接触超时），峰值 0.167 N | 已仿真验证（Simulated） |
 | REQ-F-04 | 软限 3.50 N 触发时降额而非直接中止 | `force_control.c` Priority 2 块：`fc->force_target_n = TP_FORCE_SOFT_LIMIT_N * 0.9f` | 代码路径存在，**未在七场景中被单独命中** | 仅设计目标 / Target KPI（未实测，无场景覆盖） |
 | REQ-F-05 | 力环无法在规定时间内收敛时必须中止 | `force_control.c`：`grip_trip(... TP_FAULT_FORCE_OVERLOAD, "force loop failed to settle within timeout")` | 代码路径存在，**未在七场景中被单独命中** | 仅设计目标 / Target KPI（未实测，无场景覆盖） |
@@ -360,7 +390,7 @@ sequenceDiagram
 
 | 场景 | 结果 | 峰值夹持力 |
 |---|---|---|
-| A nominal pick | 周期完成 | 2.386 N |
+| A nominal pick | 周期完成 | 2.493 N |
 | B target position error（+8 mm 横向） | 周期中止，`ERR_TARGET`（接触超时） | 0.167 N |
 | C force sensor noise（σ = 80 mN） | 周期完成 | 2.426 N |
 | D excessive grip force（纯位置控制，茎秆在 16 mm） | 中止，`ERR_FORCE_OVERLOAD` | （从未达到） |
@@ -377,7 +407,7 @@ sequenceDiagram
 | 定位误差 | 未给数值 | 无实测；仅机构近似分析约 1.2 mm（工作区边缘） |
 | 夹持力误差 | 未给数值 | 带内 ±0.10 N，超调 0.00 N（场景 A） |
 | 通信延迟 | 未给数值 | 无端到端实测；命令延迟界 10 ms 为周期推论 |
-| 峰值夹持力 | ≤ 5.00 N | 2.386 N（场景 A） |
+| 峰值夹持力 | ≤ 5.00 N | 2.493 N（场景 A） |
 | 截止期错失 | 0 次 | 0 次（场景 A，6000/3000/600/600/600 周期） |
 | 链路 CRC 错误 | 0 | 0（2200 B、100 帧） |
 
@@ -406,7 +436,7 @@ sequenceDiagram
 2. 核心机制是 **`force_control.c` 的八子态力控柔性夹持**，替代第一代的纯位置控；控制目标是夹持力而非间隙，因为茎秆刚度不可预知且受力呈二次上升。
 3. 决策层是 **12 状态、14 事件的表驱动 FSM**（`robot_fsm.c`），与连续控制问题解耦；控制层是**位置 → 速度双闭环**（`cascade.c`）加力环，三个循环复用同一个 `pid.c`。
 4. 保护分层明确：过力与软限零去抖且检查在控制器之前（同一周期生效），堵转/过流去抖，急停走 `tp_platform_emergency_kill()` 硬件路径。
-5. 【仿真结果（Simulated）】Scenario A 峰值夹持力 2.386 N、超调 0.00 N、49 周期收敛、0 截止期错失、0 CRC 错误；七场景 7/7 PASS，其中 5 个故障注入场景（B、D、E、F、G）全部按预期中止或急停，而不是"完成周期"。
+5. 【仿真结果（Simulated）】Scenario A 峰值夹持力 2.493 N、超调 0.00 N、49 周期收敛、0 截止期错失、0 CRC 错误；七场景 7/7 PASS，其中 5 个故障注入场景（B、D、E、F、G）全部按预期中止或急停，而不是"完成周期"。
 6. **本课题没有实物硬件**：没有 PCB、没有真机标定、视觉是注入/mock、第二关节未实现、无真实茶芽数据。所有硬件内容为【参考设计 / Recommended Implementation，未制作实物板】，所有指标类与实机结论为【设计目标 / Target KPI（未实测）】。
 7. 本设计最有价值的产出不是"通过率高"，而是**把工程判断连同反例一起写进了代码注释**：第一版 4000 千分比/秒的斜率限制为什么是错的、堵转为什么不能建模成力矩、接触超时为什么不能算 WARNING、期望为什么必须写成数据表——这些都被记录在源码里，可以逐条复核。
 

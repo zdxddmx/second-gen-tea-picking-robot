@@ -1,5 +1,35 @@
 # 第二代智能无人机采茶机器人系统 —— 安全设计（Safety Design）
 
+<!-- REVISION NOTICE - do not remove -->
+> ### ⚠️ 参数修订说明（第三次校正，覆盖全文数值）
+>
+> 本文档写作期间，项目经历了三轮**更正**，因此正文中的部分**具体数字已经过期**。
+> 保留原文是为了不掩盖修正过程，但读数时请以代码为准。
+> **第三次更正的完整缺陷清单见 [`docs/12_results_analysis.md`](12_results_analysis.md) 的 §3.5。**
+>
+> | 常量 | 已废弃的值 | 当前值（权威） | 更正原因 |
+> |---|---|---|---|
+> | `TP_PLANT_MOTOR_KT_NM_PER_A` | 2.0 | **0.4** | SI 单位下 `Kt` 与 `Ke` 是同一物理量，原值相差 40 倍，违反能量守恒 |
+> | `TP_PLANT_MOTOR_KE_VS_RAD` | 0.05 | **0.4** | 同上 |
+> | `TP_VEL_PID_KP` | 0.005 | **0.026** | 被控对象 DC 增益由 480 变为 60 mrad/s/permille，必须重新整定 |
+> | `TP_VEL_PID_KI` | 0.10 | **0.83** | 同上 |
+> | `TP_POS_PID_KP` | 12.0 | **5.0** | 第一次校正 |
+> | `TP_POS_PID_IMAX` | 8000 | **2000** | 第一次校正 |
+> | `TP_JOINT_MAX_SPEED_MRAD_S` | 60000 | **40000** | 原值恰等于空载转速，只能在零转矩下达到 |
+> | `TP_MAX_PWM_RATE_PER_S` | 4000 | **200000** | 第一次校正：原值是速度环内的主导滞后 |
+> | 场景 A 峰值夹持力 | 2.493 N | **2.363 N** | 第三次校正：力背驱符号修正 |
+> | 场景 A 达到目标力 | 2.26 N | **2.18 N** | 同上 |
+> | 场景 A 接触间隙 | 5.688 mm | **5.682 mm** | 同上 |
+> | 场景 A 主机链路解码 | 2200 B / 100 帧 | **2134 B / 97 帧** | 同上 |
+> | `TP_PLANT_JAW_BACKDRIVE` 的作用方向 | 减去（`-=`） | **加上（`+=`）** | 符号错误使茎秆把空夹爪"吸"到机械硬限：力从 5.0 N 涨到 16.4 N，并误锁存传感器故障 |
+> | 力环服务速率 | 100 Hz（与注释不符） | **1 kHz** | 力环搬入 1 kHz 控制任务，"N 个控制周期"从此等于 N ms |
+>
+> **唯一权威**：`firmware/Application/config.h` 与 `firmware/BSP/host/plant_model.h`。
+> 二者的一致性由 `tests/test_config_agreement.py` 自动校验——它会解析这两个头文件并与
+> Python 模型逐条比对，因此任何再次漂移都会变成失败的测试而不是过期的文档。
+<!-- /REVISION NOTICE -->
+
+
 > 文档对象：`firmware/Safety/{fault_codes,fault_manager,safety_monitor}.{h,c}`、`firmware/Control/force_control.c`、
 > `firmware/Application/config.h`（第 7 节安全阈值）、`firmware/BSP/{platform_api.h,bsp_types.h,limit_switch.h,motor.h}`、
 > `firmware/BSP/host/{platform_host.c,plant_model.c}`、`firmware/Core/{app_tasks.c,app_sequence.c,main_host.c}`、
@@ -60,7 +90,7 @@
 | H3 | 人员被运动部件夹伤 | 关节运动中人员接近、E-stop 失效 | 人员伤害 | 急停常闭回路（`TP_IO_ESTOP`，`active_low = 1`）→ `TP_FAULT_ESTOP`（CRITICAL）→ `tp_platform_emergency_kill()`；限位开关 `TP_IO_LIMIT_JOINT_MIN/MAX` → `TP_FAULT_LIMIT`；软限位 `±90000.0f` mrad | CRITICAL | 每次运行 | **高** | **无实物 E-stop 验证**、无安全继电器、无 PL 等级；本项是本项目**最大的未验证残余风险** |
 | H4 | 通信失控 | 主机进程崩溃、线缆脱落、总线饱和 | 采集继续用过期目标 | `TP_COMM_TIMEOUT_MS = 200u` → `TP_FAULT_COMM_TIMEOUT`（WARNING）；`on_link_lost` 在非 IDLE 态调用 `tp_app_stop`；主机心跳 `TP_COMM_HEARTBEAT_MS = 500u` | WARNING | 每次运行 | 中 | WARNING **不锁存、不阻断运动**（设计意图），故链路抖动期间运动仍被允许 |
 | H5 | 堵转过热 / 烧驱动 | 关节被枝条卡住、机械卡涩 | 绕组过热、驱动损坏 | 过流 `TP_MAX_CURRENT_MA = 3000.0f` + `TP_OVERCURRENT_TRIP_MS = 50u` → `TP_FAULT_OVERCURRENT`；驱动层 `TP_MOTOR_OC_TRIP_SAMPLES = 20u`（1 kHz → 20 ms）；堵转 `TP_STALL_*` → `TP_FAULT_MOTOR_STALL` | ERROR | 偶发 | 中 | 驱动层 20 ms 锁存**不置位故障码**（只记录日志），登记表看到的是 50 ms 那一层 |
-| H6 | 失控运动（发散） | 增益错误、反馈异常、控制器发散 | 高速撞击、结构损坏 | `tp_cascade_is_diverged()`（PID 非有限输入/输出 `tp_pid_is_diverged`）→ `TP_FAULT_INTERNAL` 并置零需求；`TP_MAX_DUTY_RATE_PER_S = 200000.0f` 斜率限制；`TP_JOINT_MAX_SPEED_MRAD_S = 60000.0f` | ERROR | 异常 | 低 | 发散判据只覆盖"非有限值"，不覆盖"有限但有界振荡" |
+| H6 | 失控运动（发散） | 增益错误、反馈异常、控制器发散 | 高速撞击、结构损坏 | `tp_cascade_is_diverged()`（PID 非有限输入/输出 `tp_pid_is_diverged`）→ `TP_FAULT_INTERNAL` 并置零需求；`TP_MAX_DUTY_RATE_PER_S = 200000.0f` 斜率限制；`TP_JOINT_MAX_SPEED_MRAD_S = 40000.0f` | ERROR | 异常 | 低 | 发散判据只覆盖"非有限值"，不覆盖"有限但有界振荡" |
 | H7 | 掉电时夹持物滞留 | 断电、急停、驱动断电 | 芽叶被夹住带离/掉落 | 仿真中 `plant_model.c` 建模为弹簧张开（`v_jaw = TP_GRIPPER_MAX_SPEED_MM_S`）；`TP_FAULT_ESTOP/ENCODER/WATCHDOG` 触发 `app_disable_drive()` | CRITICAL | 偶发 | 中 | **"夹爪断电弹性张开"仅为参考设计（未验证）**，真实硬件是否如此无法证实 |
 | H8 | 编码器故障导致飞车 | 编码器断线、屏蔽不良、耦合松动 | 闭环驱动错向、失控 | 不可能加速度 `TP_ENCODER_MAX_ACCEL_MRAD_S2 = 4000000.0f`（连续 2 个周期）→ `TP_FAULT_ENCODER`（CRITICAL）→ 立即 `tp_platform_emergency_kill()`；读失败 ≥ 10 次同样置位 | CRITICAL | 偶发 | 中 | 无 A/B 通道一致性校验；飞车保护**未做过真实断线实验** |
 
@@ -282,7 +312,7 @@ code_ok = (hit_primary || hit_alt);
 |---|---|---|---|
 | 驱动层过流 | `current_limit_ma = TP_MAX_CURRENT_MA = 3000.0f` mA | `TP_MOTOR_OC_TRIP_SAMPLES = 20u` 个 1 ms 控制周期 = **20 ms** | 堵转瞬间反电动势为零（转速被运动约束钉在 0），`i = v/R = 1.92/2.0 = 0.96 A`（80 ‰ 时）直到控制器把占空比推满；电流环饱和后立刻越限 |
 | 监督层过流 | `TP_MAX_CURRENT_MA = 3000.0f` mA | `TP_OVERCURRENT_TRIP_MS = 50u` ms（100 Hz 安全任务 → 5 个周期） | 距事件 **50 ms** |
-| 堵转 | 占空比 > `TP_STALL_PWM_THRESHOLD = 80.0f` ‰ **且** 转速 < `TP_STALL_SPEED_THRESHOLD_MRAD_S = 30.0f` mrad/s | 先要武装（`config.h` 原文："With `TP_VEL_PID_KI = 0.10` and a large position error ..., a demand of 80 per-mille is reached in roughly 100 ms"），再持续 `TP_STALL_TRIP_MS = 300u` ms | 最早约 **400 ms** |
+| 堵转 | 占空比 > `TP_STALL_PWM_THRESHOLD = 80.0f` ‰ **且** 转速 < `TP_STALL_SPEED_THRESHOLD_MRAD_S = 30.0f` mrad/s | 先要武装（`config.h` 原文："With `TP_VEL_PID_KI = 0.83` and a large position error ..., a demand of 80 per-mille is reached in roughly 100 ms"），再持续 `TP_STALL_TRIP_MS = 300u` ms | 最早约 **400 ms** |
 
 结论：**过流先触发是正确行为，不是缺陷**。50 ms（甚至 20 ms）与约 400 ms 相差近一个数量级；而且两者保护的**危害不同**——过流保护的是"电流是否已经超出连续额定"（热危害已经发生），堵转保护的是"是否在要求力矩而轴不动"（热危害即将发生）。谁先满足，谁先动作。
 
@@ -380,7 +410,7 @@ flowchart TD
 6. **`TP_IO_DRIVER_FAULT`（nFAULT）无保护实现**：该位由被控对象产出（且恒为"正常"），固件中**没有任何读取点**，因此"驱动故障"这一类危害的软件防护是空的。
 7. **代码与注释存在已披露的不一致**（见第 1 节表）：`TP_SENSOR_FAULT_DEBOUNCE = 10u` 未使用、软限在 `safety_monitor.h` 被列为检查项但实现不在该模块、编码器"通道不一致"检测未实现、`TP_OVERCURRENT_TRIP_MS` 的注释单位与用法不符、`brp_types.h` 不存在（实为 `bsp_types.h`）、力环不收敛复用了 `ERR_FORCE_OVERLOAD` 码。
 8. **关节回零序列不存在**：`tp_platform_encoder_reset()` 无调用点，跨上电的位置有效性属未定义行为。
-9. **性能类声明限于仿真**：Scenario A 的收敛与实时性结论（力达 2.17 N，设定 2.20 N、band ±0.10 N；**超调 0.00 N**；49 个控制周期收敛；峰值夹持力 2.386 N，硬限 5.00 N；6000 控制周期 **0 次截止期错失**）全部是**仿真结果（Simulated）**，未在硬件上验证。七场景整体为 **7/7 PASS（仿真结果）**：A 2.386 N、B 中止 `ERR_TARGET` 0.167 N、C 2.426 N、D 中止 `ERR_FORCE_OVERLOAD`（从未达到峰值力）、E `ERR_COMM_TIMEOUT`、F 过流/堵转保护触发、G `EMERGENCY_STOP` + `ERR_ESTOP`。
+9. **性能类声明限于仿真**：Scenario A 的收敛与实时性结论（力达 2.26 N，设定 2.20 N、band ±0.10 N；**超调 0.00 N**；49 个控制周期收敛；峰值夹持力 2.493 N，硬限 5.00 N；6000 控制周期 **0 次截止期错失**）全部是**仿真结果（Simulated）**，未在硬件上验证。七场景整体为 **7/7 PASS（仿真结果）**：A 2.493 N、B 中止 `ERR_TARGET` 0.167 N、C 2.426 N、D 中止 `ERR_FORCE_OVERLOAD`（从未达到峰值力）、E `ERR_COMM_TIMEOUT`、F 过流/堵转保护触发、G `EMERGENCY_STOP` + `ERR_ESTOP`。
 10. **设计指标无实测值**：**茶芽破损率 ≤ 1 %（设计目标 / Target KPI，未实测）**。没有一个真实茶芽在本项目中受到过任何载荷。
 11. **仓库中 `data/logs/host_scenario_*.csv` 与本文结论不一致，故未引用**：例如 `host_scenario_B.csv` 显示 `cycle=1`、`fault=0`，`host_scenario_C.csv` 与 `host_scenario_F.csv` 全程停留在 `state=2 (IDLE)`、`fault=0`，与"B/C/F 中止并置位故障"的结论矛盾；`host_scenario_G.csv` 则与结论一致（`fault=8`、`state=11`）。这批 CSV 的行数也不统一（A/D 5020、B 6450、E/G 9000），判断为早期版本（`main_host.c` 注释自述"第一版依赖 default 分支提供目标，使 C/E/F 在 IDLE 空转九秒"）遗留的陈旧产物。**本文所有结果数字只取七场景 7/7 PASS 的结论**，`data/logs/` 目录的数值一律未使用；若要作为报告附图，需重跑 `scripts/run_scenarios.ps1 -Csv` 后再核对。
 

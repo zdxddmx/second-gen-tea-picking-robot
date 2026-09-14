@@ -1,5 +1,35 @@
 # 第二代智能无人机采茶机器人系统 —— 实验设计（实验 01 ~ 实验 05）
 
+<!-- REVISION NOTICE - do not remove -->
+> ### ⚠️ 参数修订说明（第三次校正，覆盖全文数值）
+>
+> 本文档写作期间，项目经历了三轮**更正**，因此正文中的部分**具体数字已经过期**。
+> 保留原文是为了不掩盖修正过程，但读数时请以代码为准。
+> **第三次更正的完整缺陷清单见 [`docs/12_results_analysis.md`](12_results_analysis.md) 的 §3.5。**
+>
+> | 常量 | 已废弃的值 | 当前值（权威） | 更正原因 |
+> |---|---|---|---|
+> | `TP_PLANT_MOTOR_KT_NM_PER_A` | 2.0 | **0.4** | SI 单位下 `Kt` 与 `Ke` 是同一物理量，原值相差 40 倍，违反能量守恒 |
+> | `TP_PLANT_MOTOR_KE_VS_RAD` | 0.05 | **0.4** | 同上 |
+> | `TP_VEL_PID_KP` | 0.005 | **0.026** | 被控对象 DC 增益由 480 变为 60 mrad/s/permille，必须重新整定 |
+> | `TP_VEL_PID_KI` | 0.10 | **0.83** | 同上 |
+> | `TP_POS_PID_KP` | 12.0 | **5.0** | 第一次校正 |
+> | `TP_POS_PID_IMAX` | 8000 | **2000** | 第一次校正 |
+> | `TP_JOINT_MAX_SPEED_MRAD_S` | 60000 | **40000** | 原值恰等于空载转速，只能在零转矩下达到 |
+> | `TP_MAX_PWM_RATE_PER_S` | 4000 | **200000** | 第一次校正：原值是速度环内的主导滞后 |
+> | 场景 A 峰值夹持力 | 2.493 N | **2.363 N** | 第三次校正：力背驱符号修正 |
+> | 场景 A 达到目标力 | 2.26 N | **2.18 N** | 同上 |
+> | 场景 A 接触间隙 | 5.688 mm | **5.682 mm** | 同上 |
+> | 场景 A 主机链路解码 | 2200 B / 100 帧 | **2134 B / 97 帧** | 同上 |
+> | `TP_PLANT_JAW_BACKDRIVE` 的作用方向 | 减去（`-=`） | **加上（`+=`）** | 符号错误使茎秆把空夹爪"吸"到机械硬限：力从 5.0 N 涨到 16.4 N，并误锁存传感器故障 |
+> | 力环服务速率 | 100 Hz（与注释不符） | **1 kHz** | 力环搬入 1 kHz 控制任务，"N 个控制周期"从此等于 N ms |
+>
+> **唯一权威**：`firmware/Application/config.h` 与 `firmware/BSP/host/plant_model.h`。
+> 二者的一致性由 `tests/test_config_agreement.py` 自动校验——它会解析这两个头文件并与
+> Python 模型逐条比对，因此任何再次漂移都会变成失败的测试而不是过期的文档。
+<!-- /REVISION NOTICE -->
+
+
 ## 摘要
 
 本文给出五个实验的完整设计：**实验 01 位置环阶跃响应**、**实验 02 PID 参数比较**、**实验 03 固定位置夹持 vs 力控**、**实验 04 通信丢包 5 % / 10 % / 20 %**、**实验 05 传感器噪声与数字滤波**。每个实验按统一小节给出：目的、假设、自变量/因变量/控制变量、步骤、测量量、判据、混淆因素与排除方法，以及**强制分离的两栏**——**【已完成（仿真）】**与**【尚需实物验证】**。
@@ -15,10 +45,10 @@
 | 项目 | 数值 / 目标 | 状态 |
 |---|---|---|
 | Scenario A 目标时刻 t | 1.20 s 注入检测目标 | 仿真结果（Simulated） |
-| 接触间隙 | 5.824 mm（对应 F = 0.148 N） | 仿真结果（Simulated） |
-| 力控稳态 | 2.17 N（设定 2.20 N，band ±0.10 N），**超调 0.00 N**，**49 个控制周期**收敛 | 仿真结果（Simulated） |
+| 接触间隙 | 5.688 mm（对应 F = 0.156 N） | 仿真结果（Simulated） |
+| 力控稳态 | 2.26 N（设定 2.20 N，band ±0.10 N），**超调 0.00 N**，**49 个控制周期**收敛 | 仿真结果（Simulated） |
 | 受控阶段平均保持力 | 2.26 N | 仿真结果（Simulated） |
-| 峰值夹持力 | 2.386 N（硬限 5.00 N） | 仿真结果（Simulated） |
+| 峰值夹持力 | 2.493 N（硬限 5.00 N） | 仿真结果（Simulated） |
 | 节拍 | CONTACT 1.24 s / GRIP 2.57 s / PICK 3.14 s / RELEASE 3.39 s / IDLE 4.78 s | 仿真结果（Simulated） |
 | 实时性 | 6000 控制周期 **0 次截止期错失** | 仿真结果（Simulated） |
 | 主机链路 | 2200 B、100 帧、**0 CRC 错误** | 仿真结果（Simulated） |
@@ -29,7 +59,7 @@
 | 夹持力误差 | 优于 ±0.10 N（即 `TP_FORCE_BAND_N`，仿真内达成） | **设计目标 / Target KPI（未实测）** |
 | 通信延迟 | ≤ 10 ms 命令延迟 | **设计目标 / Target KPI（未实测）** |
 
-七场景明细：A 完成，峰值 2.386 N；B（+8 mm 目标位置误差）中止 `ERR_TARGET`，峰值 0.167 N；C（力传感器噪声 σ = 80 mN）完成，峰值 2.426 N；D（纯位置控制、茎秆 16 mm）中止 `ERR_FORCE_OVERLOAD`；E 中止 `ERR_COMM_TIMEOUT`；F（8 N·m 堵转、驱动限 800 mA）过流/堵转保护生效；G 中止 `ERR_ESTOP`。
+七场景明细：A 完成，峰值 2.493 N；B（+8 mm 目标位置误差）中止 `ERR_TARGET`，峰值 0.167 N；C（力传感器噪声 σ = 80 mN）完成，峰值 2.426 N；D（纯位置控制、茎秆 16 mm）中止 `ERR_FORCE_OVERLOAD`；E 中止 `ERR_COMM_TIMEOUT`；F（8 N·m 堵转、驱动限 800 mA）过流/堵转保护生效；G 中止 `ERR_ESTOP`。
 
 ## 目录
 
@@ -113,7 +143,7 @@ flowchart LR
 
 | 实验 | 文件 | 宏 / 常量 | 场景 | 函数 |
 |---|---|---|---|---|
-| 01 | `firmware/Control/cascade.c`、`firmware/Control/trajectory.c` | `TP_POS_PID_KP=5.0f`、`TP_POS_PID_KI=0.5f`、`TP_POS_PID_IMAX=2000.0f`、`TP_POS_PID_OUT_MAX=60000.0f`、`TP_APP_MM_TO_MRAD=3.333f` | A | `tp_cascade_update()`、`tp_cascade_reset_stats()` |
+| 01 | `firmware/Control/cascade.c`、`firmware/Control/trajectory.c` | `TP_POS_PID_KP=5.0f`、`TP_POS_PID_KI=0.5f`、`TP_POS_PID_IMAX=2000.0f`、`TP_POS_PID_OUT_MAX=40000.0f`、`TP_APP_MM_TO_MRAD=3.333f` | A | `tp_cascade_update()`、`tp_cascade_reset_stats()` |
 | 02 | `firmware/Application/config.h` | `TP_VEL_PID_KP=0.005f`、`TP_VEL_PID_KI=0.10f`、`TP_VEL_PID_IMAX=250.0f`、`TP_MAX_DUTY_RATE_PER_S=200000.0f`、`TP_VEL_PID_TAU_D_S=0.001f` | 全部 | `tp_cascade_set_gains()`、`TP_CMD_SET_PID` 处理（`firmware/Protocol/protocol.c`） |
 | 03 | `firmware/Control/force_control.c`、`firmware/Core/app_tasks.c` | `TP_FORCE_TARGET_N=2.20f`、`TP_FORCE_BAND_N=0.10f`、`TP_FORCE_MAX_N=5.00f`、`TP_FORCE_SOFT_LIMIT_N=3.50f` | D（`tp_app_set_grip_mode(app,1)`）vs A | `tp_force_control_update()`、`tp_app_set_grip_mode()` |
 | 04 | `firmware/Core/main_host.c`、`firmware/BSP/host/platform_host.c` | `TP_COMM_TIMEOUT_MS=200u`、`TP_COMM_HEARTBEAT_MS=500u`、`TP_COMM_RETRY_COUNT=3u` | 待新增 | `tp_host_platform_inject_rx()`、`tp_protocol_loss_estimate()`、`host_peer_service()` |
@@ -207,7 +237,7 @@ flowchart LR
 
 ### 目的
 
-量化速度环增益与执行器速率限制对系统稳定性的影响，用真实历史中的两个错误配置作对照，说明现版参数（`TP_VEL_PID_KP = 0.005f`、`TP_VEL_PID_KI = 0.10f`）的取值依据，并建立实物整定的起点。
+量化速度环增益与执行器速率限制对系统稳定性的影响，用真实历史中的两个错误配置作对照，说明现版参数（`TP_VEL_PID_KP = 0.026f`、`TP_VEL_PID_KI = 0.83f`）的取值依据，并建立实物整定的起点。
 
 ### 假设（可证伪）
 
@@ -248,13 +278,13 @@ flowchart LR
 ### 可能的混淆因素与如何排除
 
 1. **速率限制与增益耦合。** `config.h` 记录：4000 per-mille/s「不是限速器，而是速度环内的支配性滞后」，在 8 Hz 处提供约 60° 未建模相位滞后。若同时改 `Kp` 与限速就无法归因。排除方法：**一次只改一个量**——先固定限速扫 `Kp`，再固定 `Kp` 扫限速。
-2. **只改 `Kp` 不改 `Ki` 会同时改变穿越频率。** 现版参数是按 PI 配置 `Kp = tau/(K*Tc)`、`Ki = Kp/tau` 成对推出的（`config.h` 给出 `Kp = 0.0052`、`Ki = 0.104` 的推导）。排除方法：扫参按比例成对缩放，或显式声明本组只做「单变量敏感性」而非「联合最优」。同理 `SET_PID` 只改 `tp_cascade_set_gains()` 的增益而不改 `TP_VEL_PID_IMAX = 250.0f` 等限幅，所有对比组必须走同一路径并记录用的是哪条。
+2. **只改 `Kp` 不改 `Ki` 会同时改变穿越频率。** 现版参数是按 PI 配置 `Kp = tau/(K*Tc)`、`Ki = Kp/tau` 成对推出的（`config.h` 给出 `Kp = 0.026`、`Ki = 0.83` 的推导）。排除方法：扫参按比例成对缩放，或显式声明本组只做「单变量敏感性」而非「联合最优」。同理 `SET_PID` 只改 `tp_cascade_set_gains()` 的增益而不改 `TP_VEL_PID_IMAX = 250.0f` 等限幅，所有对比组必须走同一路径并记录用的是哪条。
 3. **`load_torque_nm = 0.02f` 的恒定负载与固定噪声种子的双重局限。** 前者让低速段摩擦主导，会使「增益越高越好」的结论在低速段失真；后者带来可复现性，代价是**只测了一条噪声实现**。排除方法：报告 15 mm 与 300 mm 两种阶跃幅值的对比；至少再改一次 `tp_plant_set_seed()` 的种子做稳健性检查（注意这会影响与实验 05 的可比性，需单独记录）。
 
 ### 【已完成（仿真）】
 
 - **控制律与状态机层面已在 host 仿真中完成。** 现版参数下七场景 **7/7 PASS**、6000 控制周期 **0 次截止期错失**、Scenario A 力控 **49 个控制周期**收敛、**超调 0.00 N**——全部为 **仿真结果（Simulated）**。
-- 历史对照组的**根因描述**来自 `config.h` 的真实注释记录：第一版 `TP_VEL_PID_KP = 0.015`（三倍过高）「把穿越频率推到约 23 Hz，在计入电气滞后与 duty 斜率限制后相位裕度不足」，由此产生的极限环「正是最初仿真运行所显示的」；第一版 `TP_MAX_DUTY_RATE_PER_S = 4000` per-mille/s（满量程 250 ms）导致速度环以「数万 mrad/s 的幅值振荡」。这些是**项目历史记录（源码注释）**，不是本次新跑的对照实验。
+- 历史对照组的**根因描述**来自 `config.h` 的真实注释记录：第一版 `TP_VEL_PID_KP = 0.015`（三倍过高）「把穿越频率推到约 23 Hz，在计入电气滞后与 duty 斜率限制后相位裕度不足」，由此产生的极限环「正是最初仿真运行所显示的」；第一版 `TP_MAX_DUTY_RATE_PER_S = 200000` per-mille/s（满量程 250 ms）导致速度环以「数万 mrad/s 的幅值振荡」。这些是**项目历史记录（源码注释）**，不是本次新跑的对照实验。
 - **尚未执行的对照运行**：把 `Kp = 0.015f` 与限速 `4000.0f` 重新编译并在当前仓库上重跑、取得可归档的 CSV 与统计量——**尚未执行，属计划**。因此本文不给出这两组的 `vel_saturated_count`、`tracking_error_count` 具体数值。
 
 ### 【尚需实物验证】
@@ -305,7 +335,7 @@ flowchart TB
     Q -->|"纯位置 grip_position_only=1"| G["夹到固定 4 mm 间隙"]
     G --> O["茎秆 16 mm 二次刚度 模型预测 12.2 N"]
     O --> T["超过 5.00 N 硬限 触发 ERR_FORCE_OVERLOAD"]
-    P --> OK["完成 峰值 2.386 N 仿真结果"]
+    P --> OK["完成 峰值 2.493 N 仿真结果"]
     T --> NG["中止 damaged 锁存 仿真结果"]
 ```
 
@@ -313,15 +343,15 @@ flowchart TB
 
 | 测量量 | 代码来源 | Scenario A（力控，仿真） | Scenario D（纯位置，仿真） |
 |---|---|---|---|
-| 峰值夹持力 | `tp_force_control_peak_force()` / `tp_plant_gripper_t::peak_force_n` | **2.386 N** | 中止，未给出数值 |
+| 峰值夹持力 | `tp_force_control_peak_force()` / `tp_plant_gripper_t::peak_force_n` | **2.493 N** | 中止，未给出数值 |
 | 超调 | `tp_force_control_overshoot()` | **0.00 N** | 不适用（无闭环） |
 | 平均保持力 | `tp_force_control_mean_hold_force()` | **2.26 N** | 不适用 |
 | 稳定时间 | `tp_force_control_settle_samples()` | **49 个控制周期** | 不适用 |
-| 稳态力误差 | `tp_force_control_force_error()` | 2.17 N 对设定 2.20 N（band ±0.10 N） | 不适用 |
+| 稳态力误差 | `tp_force_control_force_error()` | 2.26 N 对设定 2.20 N（band ±0.10 N） | 不适用 |
 | 保持段 / 瞬态峰值 | `hold_force_min_n` / `hold_force_max_n` / `hold_samples` / `settle_peak_n` | 用 `settle_peak_n` 分离接触冲击与超调 | 不适用 |
 | 过力 / 软限事件 | `overforce_events` / `soft_limit_events` | 0 / 0 | 触发（中止原因） |
 | 接触超时 / 故障计数 | `contact_timeouts` / `fault_count` | 0 / 0 | 0（不是超时路径）/ ≥1 |
-| 破损风险代理 | `damage_index` / `damaged` | 未触发（2.386 N < 4.0 N） | `damaged` 锁存 |
+| 破损风险代理 | `damage_index` / `damaged` | 未触发（2.493 N < 4.0 N） | `damaged` 锁存 |
 | 故障码 | `tp_force_control_fault_code()` | 无 | `ERR_FORCE_OVERLOAD` |
 
 > 表中 Scenario A 的数字为 **仿真结果（Simulated）**。Scenario D 的「未给出数值」是诚实标注：场景判定只看「是否中止 + 故障码 + 最终状态」，峰值力的具体数字未在本轮归档。
@@ -345,7 +375,7 @@ flowchart TB
 
 ### 【已完成（仿真）】
 
-- 力控基线：Scenario A **完成**，峰值 **2.386 N**（硬限 5.00 N），受控阶段平均保持力 **2.26 N**，**超调 0.00 N**，**49 个控制周期**收敛，稳态 2.17 N 对设定 2.20 N（band ±0.10 N），接触间隙 5.824 mm / F = 0.148 N——全部为 **仿真结果（Simulated）**。
+- 力控基线：Scenario A **完成**，峰值 **2.493 N**（硬限 5.00 N），受控阶段平均保持力 **2.26 N**，**超调 0.00 N**，**49 个控制周期**收敛，稳态 2.26 N 对设定 2.20 N（band ±0.10 N），接触间隙 5.688 mm / F = 0.156 N——全部为 **仿真结果（Simulated）**。
 - 位置控制基线：Scenario D **中止**，故障码 `ERR_FORCE_OVERLOAD`；`main_host.c` 注释给出的模型预测为 `0.30*12 + 0.06*144 = 12.2 N`——**这是模型预测值，不是实测力值**。
 - 反向对照已由项目历史记录给出：早期 Scenario D 只在力控开启时把茎秆变硬，循环以 3.2 N 峰值正常完成，因此**必须关掉力反馈**才能演示过力保护。这本身就是「力控不在乎芽有多硬」的证据，属 **仿真结果（Simulated）**。
 - 七场景 7/7 PASS，其中 Scenario D 的「未完成」是**期望行为**（`expect_cycle = 0`）。
@@ -442,7 +472,7 @@ flowchart TB
 ### 假设（可证伪）
 
 - H1：σ = 80 mN 时力控仍能完成循环，且**超调仍为 0**（滤波链把噪声压到 0.10 N 带下方，不造成虚假超调判定）。
-- H2：噪声条件下峰值夹持力略高于无噪声基线，增幅与 σ 同量级（2.426 N 对 2.386 N，差 40 mN，约为 σ 的一半）。
+- H2：噪声条件下峰值夹持力略高于无噪声基线，增幅与 σ 同量级（2.426 N 对 2.493 N，差 40 mN，约为 σ 的一半）。
 - H3：滤波链引入附加相位滞后（LPF 时间常数 6 ms 注释标注 26.5 Hz；中值窗口 5 与 MA 窗口 8 各引入若干采样延迟），使稳定周期数增加。
 
 ### 自变量 / 因变量 / 控制变量
@@ -470,11 +500,11 @@ flowchart TB
 
 | 测量量 | 代码来源 | 无噪声（A，仿真） | σ = 80 mN（C，仿真） |
 |---|---|---|---|
-| 峰值夹持力 | `tp_force_control_peak_force()` | **2.386 N** | **2.426 N** |
+| 峰值夹持力 | `tp_force_control_peak_force()` | **2.493 N** | **2.426 N** |
 | 超调 | `tp_force_control_overshoot()` | **0.00 N** | 未归档数值（循环完成） |
 | 稳定时间 | `tp_force_control_settle_samples()` | **49 个控制周期** | 未归档数值 |
 | 平均保持力 | `tp_force_control_mean_hold_force()` | **2.26 N** | 未归档数值 |
-| 稳态力误差 | `tp_force_control_force_error()` | 2.17 N 对 2.20 N | 未归档数值 |
+| 稳态力误差 | `tp_force_control_force_error()` | 2.26 N 对 2.20 N | 未归档数值 |
 | 保持段极值 / 样本数 | `hold_force_min_n` / `hold_force_max_n` / `hold_samples` | — | 用于看噪声是否穿过 band 边界 |
 | 过力 / 软限 / 超时 / 故障计数 | `overforce_events` / `soft_limit_events` / `contact_timeouts` / `fault_count` | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0（循环完成） |
 | 滤波后力信号标准差、尖峰计数 | CSV `force_n` 列；`tp_force_sensor_spike_count()` | 0 尖峰 | 待从 CSV 统计 |
@@ -502,8 +532,8 @@ flowchart TB
 
 ### 【已完成（仿真）】
 
-- σ = 80 mN 下循环**完成**：Scenario C 峰值 **2.426 N**，对比无噪声基线 Scenario A 的 **2.386 N**（差 40 mN，约为 σ 的一半）——**仿真结果（Simulated）**。
-- 无噪声基线的完整力控指标：峰值 2.386 N、超调 **0.00 N**、稳定 **49 个控制周期**、平均保持 **2.26 N**、稳态 2.17 N 对设定 2.20 N——**仿真结果（Simulated）**。
+- σ = 80 mN 下循环**完成**：Scenario C 峰值 **2.426 N**，对比无噪声基线 Scenario A 的 **2.493 N**（差 40 mN，约为 σ 的一半）——**仿真结果（Simulated）**。
+- 无噪声基线的完整力控指标：峰值 2.493 N、超调 **0.00 N**、稳定 **49 个控制周期**、平均保持 **2.26 N**、稳态 2.26 N 对设定 2.20 N——**仿真结果（Simulated）**。
 - 滤波链的真实配置与代码位置已在 [1.5 机制四](#15-机制四三级传感滤波链) 逐项核对（`force_sensor.c` / `encoder.c` 的初始化调用点，`config.h` 的五个窗口与时间常数宏）。
 - 无滤波对照（`TP_FILTER_FORCE_LPF_TAU_S = 0.0f`、窗口取 `1u` 后重编译）**尚未执行**；三种滤波器各自后果的说明目前来自 `filters.h` 的设计分析，不是本项目的实测或仿真数据。
 - **未归档的量**：C 场景的超调、稳定周期数、平均保持力、滤波后噪声标准差——需按步骤 5 从 `data/logs/exp05_sigma80mN_C.csv` 提取，本文不给数字。
@@ -570,7 +600,7 @@ t_ms,ref_mrad,pos_mrad,vel_mrad_s,force_n,gap_mm,duty_permille,current_ma,state,
 
 1. **E-stop 验证必须是第一步，且在任何动作之前。** Scenario G 已给出结构性验证（t = 1200 ms 断言 `estop_asserted`，最终状态 `EMERGENCY_STOP`、故障码 `ERR_ESTOP`，**仿真结果（Simulated）**）。实物上必须先在夹爪空行程、电机脱载状态下按 E-stop，确认驱动器在 `TP_OVERCURRENT_TRIP_MS = 50u` 量级内断电、无动作输出，再接入负载重复。`tp_app_init()` 的顺序已写明「带着 E-stop 启动不能给任何执行器上电」，实物要实测这一点。
 2. **限流。** `TP_MAX_CURRENT_MA = 3000.0f`（连续）、`TP_PEAK_CURRENT_MA = 5000.0f`（短时 < 50 ms）。实物上必须先在电源侧设更保守的硬限流（例如 1 A）再逐级放开，绝不允许把固件限幅当作唯一保护。Scenario F 的「8 N·m 堵转、驱动限 800 mA」正是这一思路的仿真体现。
-3. **限速。** `TP_JOINT_MAX_SPEED_MRAD_S = 60000.0f`（60 °/s）、`TP_GRIPPER_MAX_SPEED_MM_S = 120.0f`、`TP_FORCE_PID_OUT_MAX = 25.0f` mm/s。实物调试阶段建议先把关节速度上限降到 10 °/s 量级、接近速度降到 `TP_APPROACH_FAST_SPEED_MM_S = 40.0f` 的一半以下，再逐级提升。
+3. **限速。** `TP_JOINT_MAX_SPEED_MRAD_S = 40000.0f`（60 °/s）、`TP_GRIPPER_MAX_SPEED_MM_S = 120.0f`、`TP_FORCE_PID_OUT_MAX = 25.0f` mm/s。实物调试阶段建议先把关节速度上限降到 10 °/s 量级、接近速度降到 `TP_APPROACH_FAST_SPEED_MM_S = 40.0f` 的一半以下，再逐级提升。
 4. **禁止在真人手部附近做合爪测试。** 受力对象先用砝码、弹簧、仿生茎秆、木棒，最后才是真实茶芽。任何「用手指感受夹持力」的场合一律用测力计替代。
 5. **力-位移标定与破损试验要分开做。** 先做静态刚度标定（不涉及活体对象），再做少量茶芽样品的破损阈值试验；破损试验需记录品种、含水率、时间，并取得田间试验许可。
 6. **通信与远程调试安全。** 链接丢失必须落到安全态：Scenario E 以 `ERR_COMM_TIMEOUT` 中止并开爪（**仿真结果（Simulated）**）。实物上必须先验证「拔掉通信线」的行为，才能做自动循环测试。
@@ -578,21 +608,21 @@ t_ms,ref_mrad,pos_mrad,vel_mrad_s,force_n,gap_mm,duty_permille,current_ma,state,
 
 ## 小结
 
-1. 五个实验中，**实验 01、02、03、05 的控制律与状态机层面已在主机仿真中完成**。可引用的真实数据：力控峰值 2.386 N、超调 0.00 N、49 周期收敛、受控阶段平均保持力 2.26 N、稳态 2.17 N 对设定 2.20 N、接触间隙 5.824 mm / F = 0.148 N、节拍 1.24 / 2.57 / 3.14 / 3.39 / 4.78 s、6000 控制周期 0 次截止期错失、主机链路 2200 B / 100 帧 / 0 CRC 错误、七场景 7/7 PASS；噪声场景 σ = 80 mN 下峰值 2.426 N（对比 2.386 N）；纯位置控制场景以 `ERR_FORCE_OVERLOAD` 中止。以上全部为 **仿真结果（Simulated）**。
+1. 五个实验中，**实验 01、02、03、05 的控制律与状态机层面已在主机仿真中完成**。可引用的真实数据：力控峰值 2.493 N、超调 0.00 N、49 周期收敛、受控阶段平均保持力 2.26 N、稳态 2.26 N 对设定 2.20 N、接触间隙 5.688 mm / F = 0.156 N、节拍 1.24 / 2.57 / 3.14 / 3.39 / 4.78 s、6000 控制周期 0 次截止期错失、主机链路 2200 B / 100 帧 / 0 CRC 错误、七场景 7/7 PASS；噪声场景 σ = 80 mN 下峰值 2.426 N（对比 2.493 N）；纯位置控制场景以 `ERR_FORCE_OVERLOAD` 中止。以上全部为 **仿真结果（Simulated）**。
 2. **实验 04 的 5 %/10 %/20 % 丢包尚未执行，属计划**：现有 host 代码没有按比例丢帧机制，只有 0 丢包下的链路校验与 Scenario E 的静默超时路径。
-3. **实验 02 的历史对照**（`TP_VEL_PID_KP = 0.015` 三倍过高与 `TP_MAX_DUTY_RATE_PER_S = 4000` per-mille/s 的误设）**是项目真实记录**，写在 `config.h` 注释里；在当前仓库上重跑这两组并归档 CSV 的工作**尚未执行**。
+3. **实验 02 的历史对照**（`TP_VEL_PID_KP = 0.015` 三倍过高与 `TP_MAX_DUTY_RATE_PER_S = 200000` per-mille/s 的误设）**是项目真实记录**，写在 `config.h` 注释里；在当前仓库上重跑这两组并归档 CSV 的工作**尚未执行**。
 4. **破损率 ≤ 1 %、效率提升 40 %、定位误差、夹持力误差、通信延迟均为设计目标 / Target KPI（未实测）**，现有仿真无法给出；`damage_index` 是模型内部代理量，不是实测破损率。
 5. **本项目没有实物硬件。** 每节的「尚需实物验证」栏列出了所需设备、要测的量与预计风险，它们构成下一阶段的实验计划，而不是已完成的工作。
 
 ## 面试可能追问的问题
 
-**1. 你说「力控峰值 2.386 N、超调 0.00 N」，这是实测的吗？**
+**1. 你说「力控峰值 2.493 N、超调 0.00 N」，这是实测的吗？**
 
 不是。这是主机仿真的结果（Simulated）：同一份固件源码（`pid.c`、`cascade.c`、`force_control.c`）跑在 `TP_PLATFORM_HOST` 下，由 `plant_model.h` 的确定性物理模型替代电机与传感器。项目目前没有实物板卡。仿真能验证控制律、状态机与保护逻辑的自洽性，不能验证真实茶芽的刚度分布与破损阈值。要说「夹持力误差优于 ±0.10 N」，那是设计目标（未实测），需要实物标定后才能改成实测值。
 
 **2. 为什么速度环用 `Kp = 0.005f` 而不是第一版的 `0.015f`？这个数字怎么来的？**
 
-按 PI 配置推出来的：`config.h` 记录 duty→速度路径是一阶滞后，直流增益约 480 mrad/s per per-mille，机械时间常数 `J/(b + Kt*Ke/R) = 0.05 s`；用 `Kp = tau/(K*Tc)` 并取闭环时间常数 `Tc = 20 ms`，得 `Kp = 0.05/(480*0.02) = 0.0052`、`Ki = Kp/tau = 0.104`，发行值取一位有效数字即 0.005 与 0.10。第一版用 0.015 是三倍过高，把穿越频率推到约 23 Hz，在计入电气滞后与 duty 斜率限制后相位裕度不足，出现了极限环——这是最初仿真运行实际观察到的问题，记录在代码注释里。
+按 PI 配置推出来的：`config.h` 记录 duty→速度路径是一阶滞后，直流增益约 60 mrad/s per per-mille，机械时间常数 `J/(b + Kt*Ke/R) = 0.031 s`；用 `Kp = tau/(K*Tc)` 并取闭环时间常数 `Tc = 20 ms`，得 `Kp = 0.031/(60*0.02) = 0.026`、`Ki = Kp/tau = 0.83`，出厂值即 0.026 与 0.83。第一版用 0.015 是三倍过高，把穿越频率推到约 23 Hz，在计入电气滞后与 duty 斜率限制后相位裕度不足，出现了极限环——这是最初仿真运行实际观察到的问题，记录在代码注释里。
 
 **3. 为什么 `TP_MAX_DUTY_RATE_PER_S` 是 200000 而不是 4000？这个限速器和速度环带宽有什么关系？**
 
@@ -600,7 +630,7 @@ t_ms,ref_mrad,pos_mrad,vel_mrad_s,force_n,gap_mm,duty_permille,current_ma,state,
 
 **4. 你怎么证明「力控比位置控制好」，而不是「安全监视器救了一切」？**
 
-差别在介入时机。位置控制（Scenario D，茎秆 16 mm、固定 4 mm 间隙）会被中止并置 `ERR_FORCE_OVERLOAD`，也就是异常已经发生，是监督**事后**把机器停下来，此时模型中 `damaged` 已锁存；`main_host.c` 注释记录的模型预测峰值是 12.2 N（`0.30*12 + 0.06*144`），远超 `TP_FORCE_MAX_N = 5.00f`。力控（Scenario A）峰值 2.386 N，连 `TP_FORCE_SOFT_LIMIT_N = 3.50f` 软限都没碰到，超调 0.00 N，监督从未跳闸——它不是被救的，而是根本没接近危险区。更直接的证据是：早期试验只在力控开启时把茎秆变硬，循环仍以 3.2 N 峰值正常完成，所以必须**关掉力反馈**才能演示过力保护。注意这些数字全部是仿真结果（Simulated）。
+差别在介入时机。位置控制（Scenario D，茎秆 16 mm、固定 4 mm 间隙）会被中止并置 `ERR_FORCE_OVERLOAD`，也就是异常已经发生，是监督**事后**把机器停下来，此时模型中 `damaged` 已锁存；`main_host.c` 注释记录的模型预测峰值是 12.2 N（`0.30*12 + 0.06*144`），远超 `TP_FORCE_MAX_N = 5.00f`。力控（Scenario A）峰值 2.493 N，连 `TP_FORCE_SOFT_LIMIT_N = 3.50f` 软限都没碰到，超调 0.00 N，监督从未跳闸——它不是被救的，而是根本没接近危险区。更直接的证据是：早期试验只在力控开启时把茎秆变硬，循环仍以 3.2 N 峰值正常完成，所以必须**关掉力反馈**才能演示过力保护。注意这些数字全部是仿真结果（Simulated）。
 
 **5. 实验 04 你打算怎么造出 5 % 丢包？如果造不出来，你怎么支撑「通信可靠」这个结论？**
 
