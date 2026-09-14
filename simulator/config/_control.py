@@ -1,4 +1,4 @@
-"""
+﻿"""
 Control, force-gripping, communication, safety and sensor configuration.
 
 One of the three value tables that make up :mod:simulator.config.  This part
@@ -32,21 +32,21 @@ from ._core import (  # noqa: F401
 # =============================================================================
 
 # --- Position loop (outer): mrad error -> mrad/s velocity reference ---------
-POS_PID_KP: float = 12.0
+POS_PID_KP: float = 5.0
 POS_PID_KI: float = 0.5
 POS_PID_KD: float = 0.0
 POS_PID_FF_GAIN: float = 1.0
-POS_PID_IMAX: float = 8000.0
-POS_PID_OUT_MAX: float = 60000.0
+POS_PID_IMAX: float = 2000.0
+POS_PID_OUT_MAX: float = 40000.0
 POS_PID_OUT_MIN: float = -60000.0
 POS_PID_TAU_D_S: float = 0.002
 
 # --- Velocity loop (inner): mrad/s error -> PWM per-mille -------------------
-VEL_PID_KP: float = 0.015
-VEL_PID_KI: float = 0.30
+VEL_PID_KP: float = 0.026
+VEL_PID_KI: float = 0.83
 VEL_PID_KD: float = 0.0
 VEL_PID_FF_GAIN: float = 0.0
-VEL_PID_IMAX: float = 400.0
+VEL_PID_IMAX: float = 250.0
 VEL_PID_OUT_MAX: float = 1000.0
 VEL_PID_OUT_MIN: float = -1000.0
 VEL_PID_TAU_D_S: float = 0.001

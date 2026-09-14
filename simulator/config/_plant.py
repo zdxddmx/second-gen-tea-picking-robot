@@ -1,4 +1,4 @@
-"""
+﻿"""
 Plant physics and scenario defaults.
 
 One of the three value tables that make up :mod:simulator.config.  This part
@@ -29,11 +29,25 @@ MOTOR_R_OHM: float = 2.0
 #: loop is integrated as this first-order lag rather than as the raw stiff ODE.
 MOTOR_TAU_E_S: float = MOTOR_L_H / MOTOR_R_OHM          # 0.75 ms
 #: Back-EMF constant, V*s/rad (post-gearbox effective value).
-MOTOR_KE_V_S_RAD: float = 0.05
+#:
+#: **Must equal MOTOR_KT_NM_PER_A.**  For any lossless electromechanical
+#: conversion the torque constant in N*m/A and the back-EMF constant in V*s/rad
+#: are the same number: P_mech = (Kt*I)*w and P_elec = (Ke*w)*I must agree.  A
+#: model with Kt != Ke describes a machine that produces more torque per amp
+#: than its own back-EMF implies, i.e. one that does not conserve energy.  This
+#: file had 0.05 against 2.0 - a factor of 40 - and nothing complained until the
+#: two were checked against each other.
+#:
+#: The value 0.4 is set by the top-speed requirement (V_bus/Ke >= 60 rad/s needs
+#: Ke <= 0.4 with a 24 V bus) while still leaving ample holding torque
+#: (Kt*I = 0.4*3 = 1.2 N*m continuous at the 3 A limit).
+MOTOR_KE_V_S_RAD: float = 0.4
 #: Back-EMF constant in V per (mrad/s): 0.05/1000.
 MOTOR_KE_V_PER_MRAD_S: float = MOTOR_KE_V_S_RAD / 1000.0
-#: Effective torque constant, N*m/A (post-gearbox).
-MOTOR_KT_NM_PER_A: float = 2.0
+#: Effective torque constant, N*m/A (post-gearbox).  Equals MOTOR_KE_V_S_RAD;
+#: see the note above for why that is a physical requirement and not a
+#: coincidence.  Scenario and unit tests both depend on the pair.
+MOTOR_KT_NM_PER_A: float = 0.4
 #: Reflected rotor inertia, kg*m^2.
 MOTOR_J_KG_M2: float = 2.5e-3
 #: Viscous friction coefficient, N*m*s/rad.

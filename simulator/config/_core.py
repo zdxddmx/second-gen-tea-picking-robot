@@ -64,8 +64,15 @@ JOINT_MIN_MRAD: float = -90000.0
 JOINT_MAX_MRAD: float = 90000.0
 #: Power-on / homing position, mrad.
 JOINT_HOME_MRAD: float = 0.0
-#: Maximum joint speed, mrad/s (60 deg/s).
-JOINT_MAX_SPEED_MRAD_S: float = 60000.0
+#: Maximum joint speed, mrad/s.
+#:
+#: 40 000 mrad/s = 40 rad/s, which is 67 % of the drive's no-load speed
+#: (`V_bus / Ke = 24 / 0.4 = 60 rad/s`).  The margin is deliberate: a speed
+#: command at the no-load speed can only be reached at zero torque, so a limit
+#: set there is a value the axis passes through on its way to stalling rather
+#: than a limit the controller can regulate to.  The firmware carries the same
+#: inequality and `tests/test_config_agreement.py` keeps the two in step.
+JOINT_MAX_SPEED_MRAD_S: float = 40000.0
 #: Maximum joint acceleration implied by the profile, mrad/s^2.
 JOINT_MAX_ACCEL_MRAD_S2: float = 200000.0
 
